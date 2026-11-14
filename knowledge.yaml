@@ -1,0 +1,61 @@
+version: 1
+topics:
+  - id: onboarding
+    topicId: onboarding
+    keywords: [offer letter, onboarding, pdf, 5 mb, 5mb, registration]
+    content: >-
+      InternOps onboarding requires accurate registration details and an offer
+      letter must be a clean, unencrypted PDF under 5 MB. For upload failures,
+      contact the assigned Team Lead or official UpToSkills support.
+  - id: attendance
+    topicId: attendance
+    keywords: [attendance, present, absent, leave status]
+    content: >-
+      InternOps attendance uses Present, Absent, and Leave statuses. Intern
+      attendance is read-only (view-only). Only authorized Captains and Team Leads manage
+      attendance records. This assistant cannot change attendance.
+  - id: daily-tasks
+    topicId: daily-tasks
+    keywords: [daily task, task submission, duplicate url, rejected task]
+    content: >-
+      Daily task submissions accept screenshots or unique public project URLs.
+      Duplicate URLs are restricted. Reviewers approve or reject submissions
+      with feedback; interns can revise rejected work. This assistant cannot
+      approve, reject, or edit tasks.
+  - id: ratings
+    topicId: ratings
+    keywords: [rating, star, 4-week, four-week, review cycle, remarks]
+    content: >-
+      Internship evaluations use a four-week review cycle, a one-to-five-star
+      scale, and written remarks. Submitted ratings are permanent and
+      immutable. This assistant cannot change ratings.
+  - id: requests-certificates
+    topicId: requests-certificates
+    keywords: [certificate, bonafide, leave application, verification]
+    content: >-
+      Leave applications, bonafide letter requests, and certificate requests
+      start in InternOps. Issued certificates support public verification.
+      This assistant cannot issue official documents.
+  - id: account-security
+    topicId: account-security
+    keywords: [account security, multi-device, session, password, otp]
+    content: >-
+      Users can review active multi-device sessions and revoke unrecognized
+      sessions in InternOps security controls. Never share passwords, OTPs,
+      or session tokens in chat or email.
+  - id: internship-discovery
+    topicId: internship-discovery
+    keywords: [internship, find, apply, application, remote, eligibility, ai interview, assessment, explore, resume, profile]
+    content: >-
+      Current UpToSkills internship openings and their role-specific details
+      are listed at https://uptoskills.com/intern-with-uptoskills. Review the
+      live listing for its requirements and follow the application instructions
+      shown there. Application screens, eligibility, and assessment steps may
+      differ by role. This assistant cannot view or submit an application; use
+      the official listing or contact support if its instructions are unclear.
+  - id: human-support
+    topicId: human-support
+    keywords: [human support, contact, email, phone, support]
+    content: >-
+      Official UpToSkills support is info@uptoskills.com and +91-9319772294.
+      Contact an assigned Captain or Team Lead for day-to-day cohort operations.

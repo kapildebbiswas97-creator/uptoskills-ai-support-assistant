@@ -1,0 +1,27 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Local backups and inspection artifacts
+*.backup
+*.bak
+*.old
+/step3-inspection.txt
+/step4-provider-tests.txt
+/step5-core-files.txt
+
+# Local AI Studio workspace artifacts
+.aistudio/
+
+# Historical repair snapshots
+*.before-*
+*.pre-*
+*.damaged-*
+
+# Generated AI Studio design metadata
+/public/assets/aistudio/

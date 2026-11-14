@@ -1,0 +1,6 @@
+{
+  "name": "Synthetic Intelligence Support Engine",
+  "description": "Mission-critical enterprise support assistant and operations console for engineering, learning operations, and customer workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
