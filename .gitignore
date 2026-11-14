@@ -25,3 +25,4 @@ coverage/
 
 # Generated AI Studio design metadata
 /public/assets/aistudio/
+.vercel

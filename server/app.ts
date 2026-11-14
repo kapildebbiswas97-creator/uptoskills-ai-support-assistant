@@ -9,7 +9,7 @@ import { extractPdfText } from './knowledge-base';
 import { getAIProviderConfig, getConfiguredAIProviders, namespacedModel } from './ai-provider';
 import { getAllConfiguredModelCatalog, validateModelChoice } from './model-catalog';
 
-const MAX_PDF_BYTES = 5 * 1024 * 1024;
+const MAX_PDF_BYTES = 3 * 1024 * 1024;
 
 function requiresModel(query: string): boolean {
   return /\b(cod(?:e|ing)|debug|program|python|javascript|typescript|research|search(?: the)? web|look up|latest|current|recent|news|browse online|online sources)\b/i.test(query);
@@ -62,7 +62,7 @@ export function createApp(
 ): Express {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '8mb' }));
+  app.use(express.json({ limit: '4.2mb' }));
 
   app.get('/api/models', async (_request, response) => {
     const configuredProviders = getConfiguredAIProviders();
@@ -85,11 +85,11 @@ export function createApp(
       const defaultModel = providerModels.some((model) => model.id === configuredDefault)
         ? configuredDefault
         : providerModels[0]?.id ?? models[0]?.id ?? configuredDefault;
-      if (!models.length) models = [{ id: defaultModel, name: `${config.model} · ${config.providerLabel}`, description: `${config.providerLabel} model catalog unavailable. Check provider setup and current plan limits.`, contextLength: null }];
+      if (!models.length) models = [{ id: defaultModel, name: `${config.model} Â· ${config.providerLabel}`, description: `${config.providerLabel} model catalog unavailable. Check provider setup and current plan limits.`, contextLength: null }];
       response.json({ models, defaultModel, catalog: 'configured-provider-models', modelAvailable: configuredProviders.length > 0 });
     } catch {
       const defaultModel = namespacedModel(config.provider, config.model);
-      response.json({ models: [{ id: defaultModel, name: `${config.model} · ${config.providerLabel}`, description: 'Model catalog unavailable. Check provider setup and current plan limits.', contextLength: null }], defaultModel, catalog: 'configured-default', modelAvailable: configuredProviders.length > 0 });
+      response.json({ models: [{ id: defaultModel, name: `${config.model} Â· ${config.providerLabel}`, description: 'Model catalog unavailable. Check provider setup and current plan limits.', contextLength: null }], defaultModel, catalog: 'configured-default', modelAvailable: configuredProviders.length > 0 });
     }
   });
 
@@ -128,7 +128,7 @@ export function createApp(
       return;
     }
     if (attachment === null) {
-      response.status(400).json({ error: 'attachment must be a valid PDF up to 5 MB' });
+      response.status(400).json({ error: 'attachment must be a valid PDF up to 3 MB' });
       return;
     }
     if (attachment && !textStream) {
@@ -247,7 +247,7 @@ export function createApp(
       return;
     }
     if (attachment === null) {
-      response.status(400).json({ error: 'attachment must be a valid PDF up to 5 MB' });
+      response.status(400).json({ error: 'attachment must be a valid PDF up to 3 MB' });
       return;
     }
     if (attachment && !textStream) {

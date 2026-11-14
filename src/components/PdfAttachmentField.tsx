@@ -14,7 +14,7 @@ export function PdfAttachmentField({ file, error, disabled = false, onChange }: 
     if (!next.name.toLowerCase().endsWith('.pdf')) {
       onChange(null, 'Choose a PDF file.');
     } else if (next.size > MAX_PDF_BYTES) {
-      onChange(null, 'PDFs must be 5 MB or smaller.');
+      onChange(null, 'PDFs must be 3 MB or smaller.');
     } else {
       onChange(next, '');
     }
@@ -40,10 +40,9 @@ export function PdfAttachmentField({ file, error, disabled = false, onChange }: 
             <input type="file" accept="application/pdf,.pdf" disabled={disabled} className="sr-only" onChange={(event) => handleFile(event.target.files?.[0])} />
           </label>
         )}
-        <span className="text-[10px] text-[#64748B]">Up to 5 MB Â· processed by your configured AI provider; avoid confidential files</span>
+        <span className="text-[10px] text-[#64748B]">Up to 3 MB Ã‚Â· processed by your configured AI provider; avoid confidential files</span>
       </div>
       {error && <p role="alert" className="px-2 text-[11px] text-[#FCA5A5]">{error}</p>}
     </div>
   );
 }
-

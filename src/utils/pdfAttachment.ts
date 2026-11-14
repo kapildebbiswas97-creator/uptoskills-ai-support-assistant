@@ -1,13 +1,13 @@
 import type { PdfAttachmentPayload } from '../types/assistant';
 
-export const MAX_PDF_BYTES = 5 * 1024 * 1024;
+export const MAX_PDF_BYTES = 3 * 1024 * 1024;
 
 export async function readPdfAttachment(file: File): Promise<PdfAttachmentPayload> {
   if (!file.name.toLowerCase().endsWith('.pdf')) {
     throw new Error('Choose a PDF file.');
   }
   if (file.size === 0 || file.size > MAX_PDF_BYTES) {
-    throw new Error('PDFs must be between 1 byte and 5 MB.');
+    throw new Error('PDFs must be between 1 byte and 3 MB.');
   }
 
   const dataUrl = await new Promise<string>((resolve, reject) => {
