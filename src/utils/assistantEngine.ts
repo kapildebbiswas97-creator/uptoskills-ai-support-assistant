@@ -2,7 +2,7 @@ import {
   ESCALATION_CATEGORY_GUIDANCE,
   OFFICIAL_SUPPORT,
   TOPIC_SUGGESTIONS_BY_AUDIENCE,
-} from '../data/uptoskillsKnowledge';
+} from '../data/uptoskillsKnowledge.js';
 import {
   AudienceContext,
   ConversationThread,
@@ -10,7 +10,7 @@ import {
   HelpTopicId,
   StructuredGuidance,
   TopicSuggestion,
-} from '../types/assistant';
+} from '../types/assistant.js';
 
 export interface AssistantReplyResult {
   content: string;

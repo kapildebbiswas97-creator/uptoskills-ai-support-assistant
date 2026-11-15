@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createClient } from 'redis';
+import { logEvent, recordMetric } from './observability.js';
 
 export interface RequestRateLimiter {
   backend: 'redis' | 'memory';
@@ -9,6 +10,8 @@ export interface RequestRateLimiter {
 
 export async function createRequestRateLimiter(redisUrl?: string): Promise<RequestRateLimiter> {
   let client: ReturnType<typeof createClient> | undefined;
+  let redisFallbackActive = false;
+  let redisFailureLogged = false;
   if (redisUrl) {
     client = createClient({
       url: redisUrl,
@@ -19,6 +22,8 @@ export async function createRequestRateLimiter(redisUrl?: string): Promise<Reque
       await client.connect();
     } catch {
       client = undefined;
+      redisFallbackActive = true;
+      logEvent('security.rate_limit_redis_unavailable', { reason: 'connect_failed' }, 'warn');
     }
   }
 
@@ -28,7 +33,7 @@ export async function createRequestRateLimiter(redisUrl?: string): Promise<Reque
   const maxRequests = 40;
 
   return {
-    backend: redisClient ? 'redis' : 'memory',
+    get backend() { return redisClient?.isReady && !redisFallbackActive ? 'redis' : 'memory'; },
     async allow(ipAddress) {
       const minuteKey = Math.floor(Date.now() / windowMs);
       const key = `uts:chat:${createHash('sha256').update(ipAddress).digest('hex').slice(0, 24)}:${minuteKey}`;
@@ -36,9 +41,16 @@ export async function createRequestRateLimiter(redisUrl?: string): Promise<Reque
         try {
           const count = await redisClient.incr(key);
           if (count === 1) await redisClient.expire(key, 60);
+          redisFallbackActive = false;
+          recordMetric('rate_limit_decisions_total', 1, { backend: 'redis', decision: count <= maxRequests ? 'allow' : 'deny' });
           return count <= maxRequests;
         } catch {
           // Redis is optional; continue with a per-process fallback if it drops.
+          redisFallbackActive = true;
+          if (!redisFailureLogged) {
+            redisFailureLogged = true;
+            logEvent('security.rate_limit_redis_fallback', { reason: 'operation_failed' }, 'warn');
+          }
         }
       }
 
@@ -46,11 +58,13 @@ export async function createRequestRateLimiter(redisUrl?: string): Promise<Reque
       const active = (localRequests.get(key) ?? []).filter((time) => now - time < windowMs);
       if (active.length >= maxRequests) {
         localRequests.set(key, active);
+        recordMetric('rate_limit_decisions_total', 1, { backend: 'memory', decision: 'deny' });
         return false;
       }
       active.push(now);
       localRequests.set(key, active);
       if (localRequests.size > 10_000) localRequests.delete(localRequests.keys().next().value!);
+      recordMetric('rate_limit_decisions_total', 1, { backend: 'memory', decision: 'allow' });
       return true;
     },
     async close() {

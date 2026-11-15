@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { AudienceContext, HelpTopicId } from '../src/types/assistant';
-import { AssistantReplyResult, generateAssistantReply } from '../src/utils/assistantEngine';
+import { AudienceContext, HelpTopicId } from '../src/types/assistant.js';
+import { generateAssistantReply, type AssistantReplyResult } from '../src/utils/assistantEngine.js';
 
 export interface KnowledgeTopic {
   id: string;

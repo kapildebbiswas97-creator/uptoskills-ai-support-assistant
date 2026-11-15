@@ -4,7 +4,7 @@ import {
   HelpTopicId,
   QuickActionItem,
   TopicSuggestion,
-} from '../types/assistant';
+} from '../types/assistant.js';
 
 export const OFFICIAL_SUPPORT = {
   brandName: 'UpToSkills AI Support Assistant',

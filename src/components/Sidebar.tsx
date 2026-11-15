@@ -1,7 +1,9 @@
 import {
   ChevronDown,
+  CalendarDays,
   Compass,
   History,
+  Inbox,
   LifeBuoy,
   MessageSquarePlus,
   PanelLeftClose,
@@ -29,6 +31,8 @@ interface SidebarProps {
   onChangeAudience: (audience: AudienceContext) => void;
   onToggleCollapse: () => void;
   onCloseMobile: () => void;
+  showHrEscalations: boolean;
+  showHrMeetings: boolean;
 }
 
 export function Sidebar({
@@ -44,11 +48,16 @@ export function Sidebar({
   onChangeAudience,
   onToggleCollapse,
   onCloseMobile,
+  showHrEscalations,
+  showHrMeetings,
 }: SidebarProps) {
   const navItems: { id: AppView; label: string; icon: typeof Compass }[] = [
     { id: AppView.Welcome, label: 'Welcome & Topics', icon: Compass },
     { id: AppView.History, label: 'Conversation History', icon: History },
     { id: AppView.Escalation, label: 'Human Support', icon: LifeBuoy },
+    { id: AppView.MeetingRequests, label: 'Meeting Requests', icon: CalendarDays },
+    ...(showHrEscalations ? [{ id: AppView.HrEscalations, label: 'HR Escalations', icon: Inbox }] : []),
+    ...(showHrMeetings ? [{ id: AppView.HrMeetingRequests, label: 'HR Meetings', icon: CalendarDays }] : []),
   ];
 
   const renderContent = (isMobileDrawer: boolean) => (

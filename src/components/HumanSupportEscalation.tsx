@@ -1,396 +1,192 @@
-import { useState } from 'react';
-import {
-  Check,
-  ChevronDown,
-  Copy,
-  ExternalLink,
-  Info,
-  Mail,
-  Menu,
-  Phone,
-  Users,
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Inbox, LifeBuoy, Menu, Send, TicketCheck } from 'lucide-react';
 import { AudienceContext, EscalationCategory } from '../types/assistant';
-import {
-  ESCALATION_CATEGORY_GUIDANCE,
-  OFFICIAL_SUPPORT,
-} from '../data/uptoskillsKnowledge';
-import {
-  buildEscalationSummary,
-  validateEscalationInput,
-} from '../utils/assistantEngine';
+import { ESCALATION_CONSENT_TEXT, ESCALATION_CONSENT_VERSION } from '../utils/escalationConsent';
+
+interface TicketSummary {
+  id: string;
+  reference: string;
+  subject: string;
+  description: string;
+  category: string | null;
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  version: number;
+  statusHistory: Array<{ from: string | null; to: string; changedAt: string }>;
+}
 
 interface HumanSupportEscalationProps {
   audience: AudienceContext;
+  conversationId?: string | null;
+  authenticated: boolean;
+  authMessage: string;
+  showHrEscalations: boolean;
+  onOpenHrEscalations: () => void;
   onOpenMobileSidebar: () => void;
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString();
 }
 
 export function HumanSupportEscalation({
   audience,
+  conversationId,
+  authenticated,
+  authMessage,
+  showHrEscalations,
+  onOpenHrEscalations,
   onOpenMobileSidebar,
 }: HumanSupportEscalationProps) {
-  const [category, setCategory] = useState<EscalationCategory>(
-    EscalationCategory.AttendanceRecord
-  );
+  const [view, setView] = useState<'new' | 'mine'>('new');
+  const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [preparedSummary, setPreparedSummary] = useState<string | null>(null);
-  const [copiedEmail, setCopiedEmail] = useState(false);
-  const [copiedPhone, setCopiedPhone] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
+  const [category, setCategory] = useState<string>('');
+  const [consented, setConsented] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [createdTicket, setCreatedTicket] = useState<TicketSummary | null>(null);
+  const [tickets, setTickets] = useState<TicketSummary[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<TicketSummary | null>(null);
+  const [loadingTickets, setLoadingTickets] = useState(false);
+  const [ticketsError, setTicketsError] = useState('');
+  const idempotencyKey = useRef(crypto.randomUUID());
 
-  const categoryInfo = ESCALATION_CATEGORY_GUIDANCE[category];
-
-  const handleCopyValue = async (
-    value: string,
-    setter: (v: boolean) => void
-  ) => {
+  const loadTickets = async () => {
+    if (!authenticated) return;
+    setLoadingTickets(true);
+    setTicketsError('');
     try {
-      await navigator.clipboard.writeText(value);
-      setter(true);
-      setTimeout(() => setter(false), 1800);
-    } catch {
-      setter(true);
-      setTimeout(() => setter(false), 1800);
+      const response = await fetch('/api/escalations/mine?page=1&pageSize=50', { credentials: 'same-origin' });
+      const result = await response.json() as { tickets?: TicketSummary[]; error?: string };
+      if (!response.ok) throw new Error(result.error || 'Your requests are temporarily unavailable.');
+      setTickets(Array.isArray(result.tickets) ? result.tickets : []);
+    } catch (cause) {
+      setTicketsError(cause instanceof Error ? cause.message : 'Your requests are temporarily unavailable.');
+    } finally {
+      setLoadingTickets(false);
     }
   };
 
-  const handlePrepareSummary = (e: React.FormEvent) => {
-    e.preventDefault();
-    const validation = validateEscalationInput(description);
-    if (!validation.valid) {
-      setError(validation.errors.description);
-      setPreparedSummary(null);
+  useEffect(() => {
+    if (authenticated) void loadTickets();
+  }, [authenticated]);
+
+  const openTicket = async (ticketId: string) => {
+    setSelectedTicket(null);
+    setTicketsError('');
+    try {
+      const response = await fetch(`/api/escalations/mine/${encodeURIComponent(ticketId)}`, { credentials: 'same-origin' });
+      const result = await response.json() as { ticket?: TicketSummary; error?: string };
+      if (!response.ok || !result.ticket) throw new Error(result.error || 'Ticket details are unavailable.');
+      setSelectedTicket(result.ticket);
+    } catch (cause) {
+      setTicketsError(cause instanceof Error ? cause.message : 'Ticket details are unavailable.');
+    }
+  };
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError('');
+    setCreatedTicket(null);
+    if (!consented) {
+      setError('Consent is required before this request can be submitted.');
       return;
     }
-    setError(undefined);
-    setPreparedSummary(
-      buildEscalationSummary({
-        category,
-        audience,
-        description,
-      })
-    );
-  };
+    if (subject.trim().length < 5 || subject.trim().length > 120) {
+      setError('Use a subject between 5 and 120 characters.');
+      return;
+    }
+    if (description.trim().length < 10 || description.trim().length > 10_000) {
+      setError('Use a description between 10 and 10000 characters.');
+      return;
+    }
 
-  const mailtoHref = preparedSummary
-    ? `mailto:${OFFICIAL_SUPPORT.email}?subject=${encodeURIComponent(
-        `UpToSkills Support: ${category}`
-      )}&body=${encodeURIComponent(preparedSummary)}`
-    : `mailto:${OFFICIAL_SUPPORT.email}`;
+    setSubmitting(true);
+    try {
+      const response = await fetch('/api/escalations', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current },
+        body: JSON.stringify({
+          subject: subject.trim(),
+          description: description.trim(),
+          ...(category ? { category } : {}),
+          ...(conversationId ? { conversationId } : {}),
+          consent: { accepted: true, version: ESCALATION_CONSENT_VERSION },
+        }),
+      });
+      const result = await response.json() as { ticket?: TicketSummary; error?: string };
+      if (!response.ok || !result.ticket) throw new Error(result.error || 'The request was not submitted. Retry with the same form.');
+      setCreatedTicket(result.ticket);
+      setSubject('');
+      setDescription('');
+      setCategory('');
+      setConsented(false);
+      idempotencyKey.current = crypto.randomUUID();
+      await loadTickets();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The request was not submitted. Retry with the same form.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#0B1220]">
       <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-2.5 lg:px-6 shrink-0">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onOpenMobileSidebar}
-            aria-label="Open navigation sidebar"
-            className="rounded-lg border border-white/[0.08] bg-[#111827] p-2 text-[#F8FAFC] hover:bg-[#1E293B] md:hidden"
-          >
+          <button type="button" onClick={onOpenMobileSidebar} aria-label="Open navigation sidebar" className="rounded-lg border border-white/[0.08] bg-[#111827] p-2 text-[#F8FAFC] hover:bg-[#1E293B] md:hidden">
             <Menu className="h-4 w-4" aria-hidden="true" />
           </button>
           <div>
-            <h1 className="font-display text-lg font-semibold text-[#F8FAFC]">
-              Human Support & Escalation
-            </h1>
-            <p className="text-xs text-[#94A3B8]">
-              General UpToSkills support contacts and guidance for reaching your assigned Captain or Team Lead
-            </p>
+            <h1 className="font-display text-lg font-semibold text-[#F8FAFC]">Human Support & Escalation</h1>
+            <p className="text-xs text-[#94A3B8]">Submit a private support request and track its status.</p>
           </div>
         </div>
+        {showHrEscalations && <button type="button" onClick={onOpenHrEscalations} className="inline-flex items-center gap-2 rounded-lg border border-white/[0.1] bg-[#111827] px-3 py-2 text-xs font-medium text-[#F8FAFC] hover:bg-[#1E293B]"><Inbox className="h-4 w-4" aria-hidden="true" />HR queue</button>}
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-        <div className="mx-auto max-w-[880px] space-y-6">
-          {/* UpToSkills Support Channels */}
-          <section
-            aria-label="UpToSkills support contact details"
-            className="grid grid-cols-1 gap-4 md:grid-cols-3"
-          >
-            <div className="rounded-xl border border-white/[0.08] bg-[#111827] p-4 space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-medium text-[#94A3B8]">
-                <Mail className="h-4 w-4 text-[#60A5FA]" aria-hidden="true" />
-                <span>UpToSkills Support Email</span>
-              </div>
-              <p className="font-mono text-sm font-medium text-[#F8FAFC] break-all">
-                {OFFICIAL_SUPPORT.email}
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <a
-                  href={`mailto:${OFFICIAL_SUPPORT.email}`}
-                  className="rounded-lg bg-[#2563EB] px-3 py-1.5 text-xs font-semibold text-[#F8FAFC] hover:bg-[#1D4ED8]"
-                >
-                  Email Support
-                </a>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleCopyValue(OFFICIAL_SUPPORT.email, setCopiedEmail)
-                  }
-                  aria-label="Copy support email address"
-                  className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#1E293B] px-2.5 py-1.5 font-mono text-[11px] text-[#F8FAFC] hover:border-white/[0.2]"
-                >
-                  {copiedEmail ? (
-                    <>
-                      <Check className="h-3 w-3 text-[#10B981]" aria-hidden="true" />
-                      <span className="text-[#10B981]">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3 w-3 text-[#94A3B8]" aria-hidden="true" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/[0.08] bg-[#111827] p-4 space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-medium text-[#94A3B8]">
-                <Phone className="h-4 w-4 text-[#F97316]" aria-hidden="true" />
-                <span>UpToSkills Support Phone</span>
-              </div>
-              <p className="font-mono text-sm font-medium tabular-nums text-[#F8FAFC]">
-                {OFFICIAL_SUPPORT.phone}
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <a
-                  href={`tel:${OFFICIAL_SUPPORT.phone}`}
-                  className="rounded-lg border border-white/[0.08] bg-[#1E293B] px-3 py-1.5 text-xs font-semibold text-[#F8FAFC] hover:border-[#F97316]/50"
-                >
-                  Call Support
-                </a>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleCopyValue(OFFICIAL_SUPPORT.phone, setCopiedPhone)
-                  }
-                  aria-label="Copy support phone number"
-                  className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#1E293B] px-2.5 py-1.5 font-mono text-[11px] text-[#F8FAFC] hover:border-white/[0.2]"
-                >
-                  {copiedPhone ? (
-                    <>
-                      <Check className="h-3 w-3 text-[#10B981]" aria-hidden="true" />
-                      <span className="text-[#10B981]">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3 w-3 text-[#94A3B8]" aria-hidden="true" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/[0.08] bg-[#111827] p-4 space-y-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-[#94A3B8]">
-                <Users className="h-4 w-4 text-[#10B981]" aria-hidden="true" />
-                <span>Operational Cohort Lead</span>
-              </div>
-              <p className="text-xs font-semibold text-[#F8FAFC]">
-                Assigned Captain or Team Lead
-              </p>
-              <p className="text-xs leading-relaxed text-[#94A3B8]">
-                For attendance updates, daily task review clarifications, and cohort-level operational help, contact your assigned Captain or Team Lead directly.
-              </p>
-            </div>
-          </section>
-
-          {/* Guided Escalation Preparation Form */}
-          <section className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-            <form
-              onSubmit={handlePrepareSummary}
-              noValidate
-              className="lg:col-span-3 rounded-xl border border-white/[0.08] bg-[#111827] p-5 space-y-4"
-            >
-              <div>
-                <h2 className="font-display text-base font-semibold text-[#F8FAFC]">
-                  Prepare a Support Escalation Summary
-                </h2>
-                <p className="mt-1 text-xs text-[#94A3B8]">
-                  Draft a clear summary to copy and send via email or share with your assigned Captain / Team Lead.
-                </p>
+        <div className="mx-auto max-w-[920px] space-y-5">
+          {!authenticated ? (
+            <section role="status" className="rounded-xl border border-[#F59E0B]/35 bg-[#111827] p-5 text-sm text-[#FDE68A]">
+              <div className="flex items-start gap-3"><LifeBuoy className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" /><div><h2 className="font-semibold">Sign-in is required</h2><p className="mt-1 text-xs leading-relaxed">{authMessage || 'A verified account is required to submit or track an HR escalation. No ticket has been created.'}</p><p className="mt-2 text-xs">This environment does not provide a sign-in flow. Ask the project identity administrator to configure the approved authentication integration.</p></div></div>
+            </section>
+          ) : (
+            <>
+              <div role="tablist" aria-label="Escalation views" className="flex gap-2">
+                <button type="button" role="tab" aria-selected={view === 'new'} onClick={() => setView('new')} className={`rounded-lg px-3 py-2 text-xs font-medium ${view === 'new' ? 'bg-[#2563EB] text-white' : 'bg-[#111827] text-[#CBD5E1]'}`}>New request</button>
+                <button type="button" role="tab" aria-selected={view === 'mine'} onClick={() => { setView('mine'); void loadTickets(); }} className={`rounded-lg px-3 py-2 text-xs font-medium ${view === 'mine' ? 'bg-[#2563EB] text-white' : 'bg-[#111827] text-[#CBD5E1]'}`}>My requests</button>
               </div>
 
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="escalation-category"
-                  className="block text-xs font-medium text-[#cbd5e1]"
-                >
-                  Issue Category
-                </label>
-                <div className="relative">
-                  <select
-                    id="escalation-category"
-                    value={category}
-                    onChange={(e) => {
-                      setCategory(e.target.value as EscalationCategory);
-                      setPreparedSummary(null);
-                    }}
-                    className="w-full appearance-none rounded-lg border border-white/[0.1] bg-[#0B1220] py-2 pl-3 pr-9 text-xs text-[#F8FAFC] focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30"
-                  >
-                    {Object.values(EscalationCategory).map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#94A3B8]"
-                    aria-hidden="true"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="escalation-description"
-                  className="block text-xs font-medium text-[#cbd5e1]"
-                >
-                  Short Issue Description
-                </label>
-                <textarea
-                  id="escalation-description"
-                  rows={4}
-                  value={description}
-                  onChange={(e) => {
-                    setDescription(e.target.value);
-                    if (error) setError(undefined);
-                  }}
-                  placeholder="Describe the issue clearly (do not include passwords, OTPs, or private session tokens)..."
-                  className="w-full resize-none rounded-lg border border-white/[0.1] bg-[#0B1220] p-3 text-xs leading-relaxed text-[#F8FAFC] placeholder:text-[#94A3B8] focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30"
-                />
-                {error && (
-                  <p role="alert" className="text-xs text-[#EF4444]">
-                    {error}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <span className="font-mono text-[11px] text-[#94A3B8]">
-                  Context: {audience}
-                </span>
-                <button
-                  type="submit"
-                  className="rounded-lg bg-[#2563EB] px-4 py-2 text-xs font-semibold text-[#F8FAFC] hover:bg-[#1D4ED8]"
-                >
-                  Prepare Support Summary
-                </button>
-              </div>
-
-              {preparedSummary && (
-                <div className="space-y-3 rounded-lg border border-[#F59E0B]/35 bg-[#0B1220] p-4">
-                  <div className="flex items-start gap-2 text-xs text-[#FDE68A]">
-                    <Info
-                      className="mt-0.5 h-4 w-4 shrink-0 text-[#F59E0B]"
-                      aria-hidden="true"
-                    />
-                    <span>
-                      No backend ticket system is connected—nothing has been submitted automatically. Copy this draft or open your email app to send it to {OFFICIAL_SUPPORT.email} or your assigned Captain / Team Lead.
-                    </span>
-                  </div>
-
-                  <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-white/[0.06] bg-[#111827] p-3 font-mono text-xs leading-relaxed text-[#E2E8F0]">
-                    {preparedSummary}
-                  </pre>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyValue(preparedSummary, setCopiedSummary)
-                      }
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#1E293B] px-3 py-1.5 text-xs font-medium text-[#F8FAFC] hover:bg-white/[0.1]"
-                    >
-                      {copiedSummary ? (
-                        <>
-                          <Check
-                            className="h-3.5 w-3.5 text-[#10B981]"
-                            aria-hidden="true"
-                          />
-                          <span className="text-[#10B981]">Summary Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>Copy Summary</span>
-                        </>
-                      )}
-                    </button>
-                    <a
-                      href={mailtoHref}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#F97316] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ea580c]"
-                    >
-                      <span>Open in Email Client</span>
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                    </a>
-                  </div>
-                </div>
+              {view === 'new' ? (
+                <section className="rounded-xl border border-white/[0.08] bg-[#111827] p-5">
+                  <h2 className="font-display text-base font-semibold text-[#F8FAFC]">Request help from authorised support staff</h2>
+                  <p className="mt-1 text-xs text-[#94A3B8]">Only include details needed to understand the issue. Do not include passwords, OTPs, payment information, or session tokens.</p>
+                  <form onSubmit={submit} className="mt-5 space-y-4">
+                    <div className="space-y-1.5"><label htmlFor="escalation-subject" className="block text-xs font-medium text-[#CBD5E1]">Subject</label><input id="escalation-subject" required minLength={5} maxLength={120} value={subject} onChange={(event) => setSubject(event.target.value)} className="w-full rounded-lg border border-white/[0.1] bg-[#0B1220] px-3 py-2 text-sm text-[#F8FAFC] focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30" /></div>
+                    <div className="space-y-1.5"><label htmlFor="escalation-category" className="block text-xs font-medium text-[#CBD5E1]">Category (optional)</label><select id="escalation-category" value={category} onChange={(event) => setCategory(event.target.value)} className="w-full rounded-lg border border-white/[0.1] bg-[#0B1220] px-3 py-2 text-sm text-[#F8FAFC] focus:border-[#2563EB] focus:outline-none"><option value="">Choose a category</option>{Object.values(EscalationCategory).map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+                    <div className="space-y-1.5"><label htmlFor="escalation-description" className="block text-xs font-medium text-[#CBD5E1]">What do you need help with?</label><textarea id="escalation-description" required minLength={10} maxLength={10000} rows={6} value={description} onChange={(event) => setDescription(event.target.value)} className="w-full resize-y rounded-lg border border-white/[0.1] bg-[#0B1220] p-3 text-sm leading-relaxed text-[#F8FAFC] focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30" /><p className="text-right text-[11px] text-[#94A3B8]">{description.length}/10000</p></div>
+                    {conversationId && <p className="text-xs text-[#94A3B8]">This request will include a reference to the current conversation if it is owned by your account. The transcript is not copied into the ticket.</p>}
+                    <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-[#0B1220] p-3 text-xs leading-relaxed text-[#CBD5E1]"><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[#2563EB]" /><span>{ESCALATION_CONSENT_TEXT}<span className="mt-1 block font-mono text-[10px] text-[#94A3B8]">Consent wording version: {ESCALATION_CONSENT_VERSION}</span></span></label>
+                    {error && <p role="alert" className="text-xs text-[#FCA5A5]">{error}</p>}
+                    {createdTicket && <div role="status" className="rounded-lg border border-[#10B981]/35 bg-[#052E2B] p-3 text-sm text-[#A7F3D0]"><div className="flex items-center gap-2 font-semibold"><TicketCheck className="h-4 w-4" aria-hidden="true" />Request created</div><p className="mt-1 text-xs">Ticket reference: <span className="font-mono">{createdTicket.reference}</span>. Current status: {createdTicket.status}. No response time has been promised.</p></div>}
+                    <div className="flex flex-wrap items-center justify-between gap-3"><span className="text-[11px] text-[#94A3B8]">Audience preference: {audience}. It is not used as identity or permission data.</span><button type="submit" disabled={submitting || !consented} className="inline-flex items-center gap-2 rounded-lg bg-[#2563EB] px-4 py-2 text-xs font-semibold text-white hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:opacity-50"><Send className="h-3.5 w-3.5" aria-hidden="true" />{submitting ? 'Submitting…' : 'Submit support request'}</button></div>
+                  </form>
+                </section>
+              ) : (
+                <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+                  <div className="rounded-xl border border-white/[0.08] bg-[#111827] p-4"><div className="mb-3 flex items-center justify-between"><h2 className="font-semibold text-[#F8FAFC]">My support requests</h2><button type="button" onClick={() => void loadTickets()} className="text-xs text-[#93C5FD] hover:underline">Refresh</button></div>{loadingTickets ? <p role="status" className="text-xs text-[#94A3B8]">Loading requests…</p> : tickets.length === 0 ? <p className="text-xs text-[#94A3B8]">No requests found.</p> : <ul className="space-y-2">{tickets.map((ticket) => <li key={ticket.id}><button type="button" onClick={() => void openTicket(ticket.id)} className="w-full rounded-lg border border-white/[0.08] p-3 text-left hover:bg-white/[0.04]"><span className="block font-mono text-xs text-[#93C5FD]">{ticket.reference}</span><span className="mt-1 block truncate text-sm text-[#F8FAFC]">{ticket.subject}</span><span className="mt-1 block text-[11px] text-[#94A3B8]">{ticket.status.replace('_', ' ')} · updated {formatDate(ticket.updatedAt)}</span></button></li>)}</ul>}</div>
+                  <div className="rounded-xl border border-white/[0.08] bg-[#111827] p-4">{selectedTicket ? <><h2 className="font-mono text-sm font-semibold text-[#93C5FD]">{selectedTicket.reference}</h2><p className="mt-2 text-sm font-medium text-[#F8FAFC]">{selectedTicket.subject}</p><p className="mt-1 text-xs text-[#94A3B8]">Status: {selectedTicket.status.replace('_', ' ')} · Created {formatDate(selectedTicket.createdAt)}</p>{selectedTicket.category && <p className="mt-3 text-xs text-[#CBD5E1]">{selectedTicket.category}</p>}<p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#CBD5E1]">{selectedTicket.description}</p><h3 className="mt-5 text-xs font-semibold text-[#CBD5E1]">Status history</h3><ol className="mt-2 space-y-2">{selectedTicket.statusHistory.map((item, index) => <li key={`${item.to}-${item.changedAt}-${index}`} className="text-xs text-[#94A3B8]">{item.to.replace('_', ' ')} · {formatDate(item.changedAt)}</li>)}</ol><p className="mt-4 text-[11px] text-[#64748B]">Internal staff notes are not available in requester details.</p></> : <p className="text-xs text-[#94A3B8]">Select one of your requests to view its details.</p>}</div>
+                </section>
               )}
-            </form>
-
-            {/* Relevant Help Guidance & Contact Instructions */}
-            <aside className="lg:col-span-2 rounded-xl border border-white/[0.08] bg-[#111827] p-5 space-y-4">
-              <div>
-                <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-[#F97316]">
-                  Recommended Routing
-                </p>
-                <h3 className="mt-1 font-display text-sm font-semibold text-[#F8FAFC]">
-                  {categoryInfo.primaryContact}
-                </h3>
-                <p className="mt-1.5 text-xs leading-relaxed text-[#94A3B8]">
-                  {categoryInfo.guidance}
-                </p>
-              </div>
-
-              <div className="border-t border-white/[0.06] pt-3 space-y-2">
-                <p className="text-xs font-medium text-[#cbd5e1]">
-                  Before contacting support:
-                </p>
-                <ul className="space-y-2">
-                  {categoryInfo.checklist.map((item, idx) => (
-                    <li
-                      key={idx}
-                      className="flex items-start gap-2 text-xs leading-relaxed text-[#94A3B8]"
-                    >
-                      <span className="mt-0.5 font-mono text-[11px] font-semibold text-[#60A5FA]">
-                        {idx + 1}.
-                      </span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="border-t border-white/[0.06] pt-3 text-xs text-[#94A3B8] space-y-1">
-                <p className="font-medium text-[#cbd5e1]">Official Reference Portals</p>
-                <div className="flex flex-col gap-1">
-                  <a
-                    href={OFFICIAL_SUPPORT.internshipPortalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[#60A5FA] hover:underline"
-                  >
-                    <span>uptoskills.com/intern-with-uptoskills</span>
-                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                  </a>
-                  <a
-                    href={OFFICIAL_SUPPORT.internOpsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[#60A5FA] hover:underline"
-                  >
-                    <span>internops.uptoskills.com</span>
-                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                  </a>
-                </div>
-              </div>
-            </aside>
-          </section>
+              {ticketsError && <p role="alert" className="text-xs text-[#FCA5A5]">{ticketsError}</p>}
+            </>
+          )}
         </div>
       </div>
     </main>

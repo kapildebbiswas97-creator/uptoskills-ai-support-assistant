@@ -5,10 +5,16 @@ import { getAIProviderConfig, getConfiguredAIProviders, streamOpenAICompatible, 
 import { streamGeminiText } from './gemini';
 import { createPdfKnowledgeBase } from './knowledge-base';
 import { createRequestRateLimiter } from './rate-limit';
+import { createKnowledgeSearch } from './database';
+import { createDocumentService } from './document-ingestion';
+import { createDatabaseHealthCheck } from './health';
+import { assertRuntimeEnvironment } from './environment';
+import { logEvent } from './observability';
 
 const port = Number(process.env.PORT ?? 3001);
 
 async function start() {
+  assertRuntimeEnvironment();
   const knowledge = await loadKnowledge();
   const pdfKnowledgeBase = createPdfKnowledgeBase();
   await pdfKnowledgeBase.rebuild();
@@ -18,6 +24,9 @@ async function start() {
   const aiConfig = getAIProviderConfig();
   const configuredAIProviders = getConfiguredAIProviders();
   const rateLimiter = await createRequestRateLimiter(process.env.REDIS_URL);
+  const knowledgeSearch = createKnowledgeSearch();
+  const documentService = createDocumentService();
+  const databaseHealthCheck = createDatabaseHealthCheck();
 
   const streamAI: TextStream = async function* (
     query,
@@ -57,9 +66,11 @@ async function start() {
   const app = createApp(
     knowledge,
     configuredAIProviders.length ? streamAI : undefined,
-    undefined,
+    knowledgeSearch?.search,
     rateLimiter,
-    pdfKnowledgeBase
+    pdfKnowledgeBase,
+    documentService,
+    databaseHealthCheck
   );
 
   const server = app.listen(port, '127.0.0.1', () => {
@@ -72,6 +83,9 @@ async function start() {
     server.close(async () => {
       await stopWatchingPdfs();
       await rateLimiter.close();
+      await knowledgeSearch?.close();
+      await documentService?.close();
+      await databaseHealthCheck.close();
       process.exit(0);
     });
   };
@@ -80,6 +94,6 @@ async function start() {
 }
 
 start().catch((error: unknown) => {
-  process.stderr.write(`Unable to start support API: ${String(error)}\n`);
+  logEvent('server.initialization.failed', { errorType: error instanceof Error ? error.name : 'unknown' }, 'error');
   process.exitCode = 1;
 });

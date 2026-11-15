@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatConsole } from './components/ChatConsole';
 import { ConversationHistory } from './components/ConversationHistory';
 import { HumanSupportEscalation } from './components/HumanSupportEscalation';
+import { HrEscalationDashboard } from './components/HrEscalationDashboard';
+import { MeetingRequests } from './components/MeetingRequests';
+import { HrMeetingDashboard } from './components/HrMeetingDashboard';
 import { Sidebar } from './components/Sidebar';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import {
@@ -75,6 +78,7 @@ export default function App() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     null
   );
+  const [session, setSession] = useState<{ checked: boolean; authenticated: boolean; roles: string[]; message: string }>({ checked: false, authenticated: false, roles: [], message: '' });
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -95,6 +99,24 @@ export default function App() {
     conversationId: string;
     message: AssistantMessage;
   } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/session', { credentials: 'same-origin' })
+      .then(async (response) => {
+        const result = await response.json() as { roles?: string[]; error?: string };
+        if (!active) return;
+        if (!response.ok) {
+          setSession({ checked: true, authenticated: false, roles: [], message: result.error || 'A verified sign-in is required.' });
+          return;
+        }
+        setSession({ checked: true, authenticated: true, roles: Array.isArray(result.roles) ? result.roles : [], message: '' });
+      })
+      .catch(() => {
+        if (active) setSession({ checked: true, authenticated: false, roles: [], message: 'The sign-in service could not be reached.' });
+      });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     try {
@@ -250,7 +272,7 @@ export default function App() {
               'Content-Type': 'application/json',
               Accept: 'text/event-stream',
             },
-            body: JSON.stringify({ message: prompt, audience, topicId, history, attachment, model: selectedModel }),
+            body: JSON.stringify({ message: prompt, conversationId, audience, topicId, history, attachment, model: selectedModel }),
             signal: requestController.signal,
           });
           if (!response.ok) {
@@ -447,6 +469,8 @@ export default function App() {
         activeConversationId={activeConversationId}
         activeView={activeView}
         audience={audience}
+        showHrEscalations={session.authenticated && session.roles.includes('support_agent')}
+        showHrMeetings={session.authenticated && session.roles.includes('support_agent')}
         collapsed={sidebarCollapsed}
         mobileOpen={mobileSidebarOpen}
         onSelectView={(view) => {
@@ -545,8 +569,33 @@ export default function App() {
       {activeView === AppView.Escalation && (
         <HumanSupportEscalation
           audience={audience}
+          conversationId={activeConversationId}
+          authenticated={session.checked && session.authenticated}
+          authMessage={session.message || 'A verified account is required to submit or track an HR escalation. No ticket has been created.'}
+          showHrEscalations={session.authenticated && session.roles.includes('support_agent')}
+          onOpenHrEscalations={() => setActiveView(AppView.HrEscalations)}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
+      )}
+
+      {activeView === AppView.HrEscalations && session.authenticated && session.roles.includes('support_agent') && (
+        <HrEscalationDashboard onOpenMobileSidebar={() => setMobileSidebarOpen(true)} />
+      )}
+      {activeView === AppView.HrEscalations && (!session.authenticated || !session.roles.includes('support_agent')) && (
+        <main role="alert" className="flex min-w-0 flex-1 items-center justify-center bg-[#0B1220] p-6 text-sm text-[#CBD5E1]">
+          HR escalation access requires a verified support-agent role. The API enforces this permission independently.
+        </main>
+      )}
+      {activeView === AppView.MeetingRequests && (
+        <MeetingRequests authenticated={session.checked && session.authenticated} authMessage={session.message || 'A verified account is required. This environment does not provide a browser sign-in flow.'} conversationId={activeConversationId} onOpenMobileSidebar={() => setMobileSidebarOpen(true)} />
+      )}
+      {activeView === AppView.HrMeetingRequests && session.authenticated && session.roles.includes('support_agent') && (
+        <HrMeetingDashboard onOpenMobileSidebar={() => setMobileSidebarOpen(true)} />
+      )}
+      {activeView === AppView.HrMeetingRequests && (!session.authenticated || !session.roles.includes('support_agent')) && (
+        <main role="alert" className="flex min-w-0 flex-1 items-center justify-center bg-[#0B1220] p-6 text-sm text-[#CBD5E1]">
+          HR meeting access requires a verified support-agent role. The API enforces this permission independently.
+        </main>
       )}
     </div>
   );

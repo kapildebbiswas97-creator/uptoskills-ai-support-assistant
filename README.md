@@ -19,7 +19,7 @@ The assistant can discuss general topics, help with code, and draft research or 
 
 ## PDF knowledge base
 
-Put approved, text-readable `.pdf` files in the project's `docs/` directory. The index also accepts curated `.md` and `.txt` references. At server startup, the API extracts their text, splits it into overlapping chunks, and indexes it in memory with BM25. The index refreshes after supported files are added, changed, or removed while the server is running. Each chat request retrieves up to four relevant passages. Uploaded PDF attachments up to 5 MB are extracted for that request and are not saved to `docs/`.
+Put approved, text-readable `.pdf` files in the project's `docs/` directory. The index also accepts curated `.md` and `.txt` references. At server startup, the API extracts their text, splits it into overlapping chunks, and indexes it in memory with BM25. The index refreshes after supported files are added, changed, or removed while the server is running. Each chat request retrieves up to four relevant passages. Uploaded PDF attachments up to 3 MiB are extracted for that request and are not saved to `docs/`.
 
 Policy and workflow answers are grounded in retrieved PDF passages and the existing structured `knowledge.yaml`. When the source material does not support an answer, the model is instructed to say that and append the internal `[SHOW_HR_BUTTON]` marker; the server removes the marker from visible text and returns the existing escalation metadata. Requests for human support also trigger escalation. Never put confidential or personal data in a PDF unless your chosen AI provider is approved to process it. Scanned/image-only PDFs need OCR before this text index can use them.
 

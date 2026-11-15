@@ -1,4 +1,5 @@
 \getenv reader_password UTS_DB_READER_PASSWORD
+\getenv writer_password UTS_DB_WRITER_PASSWORD
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA IF NOT EXISTS knowledge;
@@ -17,7 +18,7 @@ CREATE INDEX knowledge_documents_embedding_hnsw
 
 CREATE ROLE uts_assistant_reader
   WITH LOGIN PASSWORD :'reader_password'
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 
 REVOKE ALL ON DATABASE uptoskills FROM PUBLIC;
 GRANT CONNECT ON DATABASE uptoskills TO uts_assistant_reader;
@@ -27,3 +28,10 @@ REVOKE ALL ON TABLE knowledge.documents FROM PUBLIC;
 GRANT SELECT ON TABLE knowledge.documents TO uts_assistant_reader;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA knowledge
   GRANT SELECT ON TABLES TO uts_assistant_reader;
+
+CREATE ROLE uts_assistant_writer
+  WITH LOGIN PASSWORD :'writer_password'
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+GRANT CONNECT ON DATABASE uptoskills TO uts_assistant_writer;
+GRANT USAGE ON SCHEMA knowledge TO uts_assistant_writer;
+-- Migration 002 grants the writer only the document_chunks operations it needs.

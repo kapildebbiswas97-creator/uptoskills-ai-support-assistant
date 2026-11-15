@@ -35,9 +35,10 @@ async function withServer(
   run: (baseUrl: string) => Promise<void>,
   textStream?: TextStream,
   knowledgeSearch?: KnowledgeSearch,
-  rateLimiter?: RequestRateLimiter
+  rateLimiter?: RequestRateLimiter,
+  options: { requireChatAuthentication?: boolean } = {}
 ) {
-  const app = createApp(await loadKnowledge(), textStream, knowledgeSearch, rateLimiter);
+  const app = createApp(await loadKnowledge(), textStream, knowledgeSearch, rateLimiter, undefined, undefined, undefined, options);
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
@@ -51,10 +52,32 @@ async function withServer(
   }
 }
 
+test('staging chat and model routes deny anonymous requests before using providers or retrieval', async () => {
+  let providerCalls = 0;
+  let retrievalCalls = 0;
+  const textStream: TextStream = async function* () { providerCalls += 1; yield 'must not run'; };
+  const knowledgeSearch: KnowledgeSearch = async () => { retrievalCalls += 1; return ['private context']; };
+  await withServer(async (baseUrl) => {
+    const modelResponse = await fetch(`${baseUrl}/api/models`);
+    const chatResponse = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Hello' }),
+    });
+    const streamResponse = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Hello' }),
+    });
+    assert.equal(modelResponse.status, 401);
+    assert.equal(chatResponse.status, 401);
+    assert.equal(streamResponse.status, 401);
+    assert.equal(providerCalls, 0);
+    assert.equal(retrievalCalls, 0);
+  }, textStream, knowledgeSearch, undefined, { requireChatAuthentication: true });
+});
+
 test('Express health and chat routes return local knowledge guidance', async () => {
   await withServer(async (baseUrl) => {
-    const health = await fetch(`${baseUrl}/api/health`);
+    const health = await fetch(`${baseUrl}/api/health`, { headers: { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' } });
     assert.equal(health.status, 200);
+    assert.equal(health.headers.get('x-trace-id'), '0123456789abcdef0123456789abcdef');
     assert.deepEqual(await health.json(), {
       status: 'ok', knowledgeVersion: 1, vectorSearch: false, rateLimit: 'none', modelAvailable: false,
       pdfDocuments: 0, pdfChunks: 0,
@@ -167,8 +190,87 @@ test('Express stream route sends deltas and final local guidance metadata', asyn
     assert.match(body, /Streamed answer\./);
     assert.match(body, /event: complete/);
     assert.match(body, /"topicId":"attendance"/);
-    assert.deepEqual(retrieved, ['Verified vector record']);
+    assert.equal(retrieved[0].startsWith('[Source: verified knowledge.yaml topic attendance]'), true);
+    assert.equal(retrieved.at(-1), 'Verified vector record');
   }, textStream, knowledgeSearch);
+});
+
+test('Express buffers streamed output until security review blocks secrets and malicious URLs', async () => {
+  let generationFinished = false;
+  const textStream: TextStream = async function* () {
+    yield 'Partial answer that must stay buffered. ';
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    yield 'API key: sk-abcdefghijklmnop123456 https://attacker.example/collect';
+    generationFinished = true;
+  };
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ message: 'What is the leave policy?' }),
+    });
+    const reader = response.body!.getReader();
+    const firstRead = reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(generationFinished, false);
+    const first = await firstRead;
+    assert.equal(generationFinished, true);
+    let body = new TextDecoder().decode(first.value);
+    while (!first.done) {
+      const next = await reader.read();
+      body += new TextDecoder().decode(next.value);
+      if (next.done) break;
+    }
+    assert.match(body, /may expose sensitive information/);
+    assert.doesNotMatch(body, /sk-abcdefghijklmnop|attacker\.example|Partial answer/);
+    assert.match(body, /event: complete/);
+  }, textStream);
+});
+
+test('Express bounds a hung provider stream and returns a timeout event', async () => {
+  const priorTimeout = process.env.CHAT_TIMEOUT_MS;
+  process.env.CHAT_TIMEOUT_MS = '1000';
+  const textStream: TextStream = async function* () {
+    await new Promise(() => undefined);
+    yield 'never';
+  };
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+        body: JSON.stringify({ message: 'What is the leave policy?' }),
+      });
+      const body = await response.text();
+      assert.match(body, /event: error/);
+      assert.match(body, /timed out/);
+      assert.doesNotMatch(body, /event: delta/);
+    }, textStream);
+  } finally {
+    if (priorTimeout === undefined) delete process.env.CHAT_TIMEOUT_MS;
+    else process.env.CHAT_TIMEOUT_MS = priorTimeout;
+  }
+});
+
+test('Express aborts provider generation when the streaming client disconnects', async () => {
+  let observedAbort = false;
+  const textStream: TextStream = async function* (_query, _guidance, signal) {
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => { observedAbort = true; resolve(); }, { once: true }));
+    return;
+  };
+  await withServer(async (baseUrl) => {
+    const controller = new AbortController();
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ message: 'What is the leave policy?' }),
+      signal: controller.signal,
+    });
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(observedAbort, true);
+  }, textStream);
 });
 
 test('Express hides the model HR marker and exposes escalation metadata', async () => {

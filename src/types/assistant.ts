@@ -10,6 +10,9 @@ export enum AppView {
   Chat = 'chat',
   History = 'history',
   Escalation = 'escalation',
+  MeetingRequests = 'meeting-requests',
+  HrEscalations = 'hr-escalations',
+  HrMeetingRequests = 'hr-meeting-requests',
 }
 
 export enum MessageRole {

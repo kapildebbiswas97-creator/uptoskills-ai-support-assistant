@@ -1,4 +1,4 @@
-import { getAIProviderConfig, getConfiguredAIProviders, namespacedModel, providerLabel, type AIProviderConfig, type AIProviderId } from './ai-provider';
+import { getAIProviderConfig, getConfiguredAIProviders, namespacedModel, providerLabel, type AIProviderConfig, type AIProviderId } from './ai-provider.js';
 
 export interface AvailableAIModel {
   id: string;

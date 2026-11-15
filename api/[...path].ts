@@ -1,20 +1,29 @@
 import type { Request, Response } from 'express';
 import type { Express } from 'express';
 
-import { createApp, type TextStream } from '../server/app';
-import { loadKnowledge } from '../server/assistant';
+import { createApp, type TextStream } from '../server/app.js';
+import { loadKnowledge } from '../server/assistant.js';
 import {
   getConfiguredAIProviders,
   streamOpenAICompatible,
   splitNamespacedModel,
-} from '../server/ai-provider';
-import { streamGeminiText } from '../server/gemini';
-import { createPdfKnowledgeBase } from '../server/knowledge-base';
-import { createRequestRateLimiter } from '../server/rate-limit';
+} from '../server/ai-provider.js';
+import { streamGeminiText } from '../server/gemini.js';
+import { createPdfKnowledgeBase } from '../server/knowledge-base.js';
+import { createRequestRateLimiter } from '../server/rate-limit.js';
+import { createKnowledgeSearch } from '../server/database.js';
+import { createDocumentService } from '../server/document-ingestion.js';
+import { createDatabaseHealthCheck } from '../server/health.js';
+import { assertRuntimeEnvironment } from '../server/environment.js';
+import { logEvent } from '../server/observability.js';
 
 let appPromise: Promise<Express> | undefined;
 
 async function buildApp(): Promise<Express> {
+  // In Preview, missing integrations should be reported by /api/health and fail
+  // closed at their own routes; they must not prevent protected routes from
+  // returning their proper 401/403 responses.
+  assertRuntimeEnvironment(process.env, false);
   const knowledge = await loadKnowledge();
 
   const pdfKnowledgeBase = createPdfKnowledgeBase();
@@ -24,6 +33,21 @@ async function buildApp(): Promise<Express> {
   const configuredAIProviders = getConfiguredAIProviders();
 
   const rateLimiter = await createRequestRateLimiter(process.env.REDIS_URL);
+  let knowledgeSearch: ReturnType<typeof createKnowledgeSearch>;
+  try {
+    knowledgeSearch = createKnowledgeSearch();
+  } catch (error) {
+    logEvent('serverless.dependency.initialization_failed', { dependency: 'postgres_retrieval', errorType: error instanceof Error ? error.name : 'unknown' }, 'warn');
+    knowledgeSearch = undefined;
+  }
+  let documentService: ReturnType<typeof createDocumentService>;
+  try {
+    documentService = createDocumentService();
+  } catch (error) {
+    logEvent('serverless.dependency.initialization_failed', { dependency: 'document_ingestion', errorType: error instanceof Error ? error.name : 'unknown' }, 'warn');
+    documentService = undefined;
+  }
+  const databaseHealthCheck = createDatabaseHealthCheck();
 
   const streamAI: TextStream = async function* (
     query,
@@ -70,9 +94,11 @@ async function buildApp(): Promise<Express> {
   return createApp(
     knowledge,
     configuredAIProviders.length ? streamAI : undefined,
-    undefined,
+    knowledgeSearch?.search,
     rateLimiter,
-    pdfKnowledgeBase
+    pdfKnowledgeBase,
+    documentService,
+    databaseHealthCheck
   );
 }
 
@@ -95,7 +121,7 @@ export default async function handler(
     const app = await getApp();
     return app(request, response);
   } catch (error) {
-    console.error('Vercel API initialization failed:', error);
+    logEvent('serverless.initialization.failed', { errorType: error instanceof Error ? error.name : 'unknown' }, 'error');
 
     if (!response.headersSent) {
       return response.status(500).json({
