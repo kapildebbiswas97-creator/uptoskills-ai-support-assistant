@@ -27,7 +27,7 @@ export function createRequestBodyParser(): RequestHandler {
     // Vercel's Node adapter may parse JSON and consume the incoming stream
     // before invoking the function. Keep that parsed body and enforce the
     // same limits instead of asking body-parser to read a consumed stream.
-    if (request.body !== undefined || request.readableEnded) {
+    if (request.body !== undefined || request.readableEnded || !request.readable) {
       const contentLength = Number(request.get('content-length'));
       let byteLength = Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined;
       if (byteLength === undefined && request.body !== undefined) {

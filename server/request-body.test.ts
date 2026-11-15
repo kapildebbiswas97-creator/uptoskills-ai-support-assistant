@@ -33,6 +33,16 @@ test('keeps a body already parsed by the serverless adapter without rereading it
   assert.deepEqual(request.body, { message: 'hello' });
 });
 
+test('does not invoke a stream parser when the serverless adapter consumed the request body', () => {
+  const middleware = createRequestBodyParser();
+  const request = middlewareRequest({ body: undefined, readable: false, readableEnded: false });
+  const { response, result } = middlewareResponse();
+  let continued = false;
+  middleware(request, response, (() => { continued = true; }) as NextFunction);
+  assert.equal(continued, true);
+  assert.equal(result.status, undefined);
+});
+
 test('enforces the smaller workflow limit for a serverless pre-parsed request', () => {
   const middleware = createRequestBodyParser();
   const request = middlewareRequest({ url: '/api/meeting-requests?source=web', get: () => String(17 * 1024) });
