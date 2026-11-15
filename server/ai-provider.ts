@@ -1,5 +1,6 @@
 import type { AssistantReplyResult } from '../src/utils/assistantEngine';
 import type { ChatHistoryTurn, PdfAttachmentPayload } from '../src/types/assistant';
+import type { OpenRouterUsageMetadata, OpenRouterUsageReporter, OpenRouterUsageStatus } from './ai-usage.js';
 
 export const AI_PROVIDERS = ['ollama', 'openrouter', 'groq', 'gemini', 'cloudflare', 'cerebras', 'nvidia', 'mistral', 'requesty'] as const;
 export type AIProviderId = typeof AI_PROVIDERS[number];
@@ -114,12 +115,43 @@ function extractDelta(value: unknown): string {
   return '';
 }
 
-function parseSseFrame(frame: string): string | 'DONE' | undefined {
-  const data = frame.split(/\r?\n/).find((line) => line.startsWith('data:'))?.slice(5).trim();
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function tokenCount(value: unknown): number | undefined {
+  const count = finiteNumber(value);
+  return count !== undefined && Number.isInteger(count) && count >= 0 ? count : undefined;
+}
+
+function boundedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200 ? value : undefined;
+}
+
+function hasProviderError(value: unknown): boolean {
+  const chunk = asRecord(value);
+  if (!chunk) return false;
+  if (asRecord(chunk.error)) return true;
+  if (!Array.isArray(chunk.choices)) return false;
+  return chunk.choices.some((choice) => Boolean(asRecord(asRecord(choice)?.error)));
+}
+
+function parseSseFrame(frame: string): unknown | 'DONE' | undefined {
+  const data = frame.split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).replace(/^ /, ''))
+    .join('\n')
+    .trim();
   if (!data) return undefined;
   if (data === '[DONE]') return 'DONE';
   try {
-    return extractDelta(JSON.parse(data));
+    return JSON.parse(data) as unknown;
   } catch {
     return undefined;
   }
@@ -133,7 +165,8 @@ export async function* streamOpenAICompatible(
   history: ChatHistoryTurn[] = [],
   _attachment?: PdfAttachmentPayload,
   selectedModel?: string,
-  config: AIProviderConfig = getAIProviderConfig()
+  config: AIProviderConfig = getAIProviderConfig(),
+  reportUsage?: OpenRouterUsageReporter
 ): AsyncGenerator<string> {
   let actualModel = selectedModel || config.model;
   const namespaced = splitNamespacedModel(actualModel);
@@ -166,42 +199,159 @@ export async function* streamOpenAICompatible(
   };
   if (shouldUseWebSearch(config, query)) requestBody.tools = [{ type: 'openrouter:web_search' }];
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(requestBody),
-    signal: abortSignal,
-  });
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let responseReceived = false;
+  let bodyDone = false;
+  let doneSeen = false;
+  let providerError = false;
+  let usageReceived = false;
+  let usage: Record<string, unknown> | undefined;
+  let actualResponseModel: string | undefined;
+  let responseId: string | undefined;
+  let generationId: string | undefined;
+  let statusOverride: OpenRouterUsageStatus | undefined;
+  const isOpenRouter = config.provider === 'openrouter';
 
-  if (!response.ok) {
-    throw new Error(`${config.providerLabel} returned HTTP ${response.status}; check its key, model, account limits, and free-tier availability.`);
-  }
-  if (!response.body) throw new Error(`${config.providerLabel} did not return a response stream.`);
+  const consumeChunk = (value: unknown): { delta: string; error: boolean } => {
+    const chunk = asRecord(value);
+    if (!chunk) return { delta: '', error: false };
+    const nextId = boundedString(chunk.id);
+    if (nextId) {
+      responseId = nextId;
+      generationId ??= nextId;
+    }
+    actualResponseModel = boundedString(chunk.model) ?? actualResponseModel;
+    if (Object.prototype.hasOwnProperty.call(chunk, 'usage')) {
+      usageReceived = true;
+      usage = asRecord(chunk.usage) ?? {};
+    }
+    const error = hasProviderError(chunk);
+    if (error) providerError = true;
+    return { delta: extractDelta(chunk), error };
+  };
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const reportFinalUsage = () => {
+    if (!isOpenRouter || !reportUsage) return;
+    const promptTokens = tokenCount(usage?.prompt_tokens);
+    const completionTokens = tokenCount(usage?.completion_tokens);
+    const totalTokens = tokenCount(usage?.total_tokens);
+    const usageComplete = doneSeen && usageReceived && promptTokens !== undefined &&
+      completionTokens !== undefined && totalTokens !== undefined && !abortSignal.aborted && !providerError;
+    const usageStatus: OpenRouterUsageStatus = statusOverride ?? (
+      abortSignal.aborted ? 'cancelled' :
+        providerError ? 'error' :
+          !responseReceived ? 'error' :
+            !doneSeen ? 'interrupted' :
+              !usageReceived ? 'unavailable' :
+                usageComplete ? 'complete' : 'incomplete'
+    );
+    const cost = finiteNumber(usage?.cost);
+    const promptDetails = asRecord(usage?.prompt_tokens_details);
+    const completionDetails = asRecord(usage?.completion_tokens_details);
+    const costDetails = asRecord(usage?.cost_details);
+    const metadata: OpenRouterUsageMetadata = {
+      provider: 'openrouter',
+      requestedModel: actualModel,
+      ...(actualResponseModel ? { actualModel: actualResponseModel } : {}),
+      ...(generationId ? { generationId } : {}),
+      ...(responseId ? { responseId } : {}),
+      ...(promptTokens !== undefined ? { promptTokens } : {}),
+      ...(completionTokens !== undefined ? { completionTokens } : {}),
+      ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(tokenCount(promptDetails?.cached_tokens) !== undefined ? { cachedTokens: tokenCount(promptDetails?.cached_tokens) } : {}),
+      ...(tokenCount(completionDetails?.reasoning_tokens) !== undefined ? { reasoningTokens: tokenCount(completionDetails?.reasoning_tokens) } : {}),
+      ...(cost !== undefined ? { providerReportedCost: cost, providerReportedCostUnit: 'credits' } : {}),
+      ...(finiteNumber(costDetails?.upstream_inference_cost) !== undefined ? { upstreamInferenceCost: finiteNumber(costDetails?.upstream_inference_cost) } : {}),
+      ...(finiteNumber(costDetails?.upstream_inference_prompt_cost) !== undefined ? { upstreamInferencePromptCost: finiteNumber(costDetails?.upstream_inference_prompt_cost) } : {}),
+      ...(finiteNumber(costDetails?.upstream_inference_completions_cost) !== undefined ? { upstreamInferenceCompletionsCost: finiteNumber(costDetails?.upstream_inference_completions_cost) } : {}),
+      ...(costDetails && Object.prototype.hasOwnProperty.call(costDetails, 'server_tool_cost')
+        ? { serverToolCostUsd: finiteNumber(costDetails.server_tool_cost) ?? (costDetails.server_tool_cost === null ? null : undefined) }
+        : {}),
+      usageReceived,
+      usageComplete,
+      usageStatus,
+      providerCostReported: cost !== undefined,
+    };
+    try {
+      reportUsage(metadata);
+    } catch {
+      // Usage telemetry must never interrupt an assistant response.
+    }
+  };
+
   let buffer = '';
   try {
+    response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: abortSignal,
+    });
+    responseReceived = true;
+    if (isOpenRouter) generationId = boundedString(response.headers.get('x-generation-id'));
+
+    if (!response.ok) {
+      statusOverride = 'error';
+      throw new Error(`${config.providerLabel} returned HTTP ${response.status}; check its key, model, account limits, and free-tier availability.`);
+    }
+    if (!response.body) {
+      statusOverride = 'error';
+      throw new Error(`${config.providerLabel} did not return a response stream.`);
+    }
+
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
     while (true) {
+      if (abortSignal.aborted) {
+        statusOverride = 'cancelled';
+        return;
+      }
       const { value, done } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() ?? '';
       for (const frame of frames) {
-        const delta = parseSseFrame(frame);
-        if (delta === 'DONE') return;
-        if (delta) yield delta;
+        const parsed = parseSseFrame(frame);
+        if (parsed === 'DONE') {
+          doneSeen = true;
+          return;
+        }
+        if (parsed === undefined) continue;
+        const result = consumeChunk(parsed);
+        if (result.error) {
+          statusOverride = 'error';
+          throw new Error('OpenRouter returned a streaming provider error.');
+        }
+        if (result.delta) yield result.delta;
       }
-      if (done) break;
-      if (abortSignal.aborted) return;
+      if (done) {
+        bodyDone = true;
+        break;
+      }
     }
     if (buffer.trim()) {
-      const delta = parseSseFrame(buffer);
-      if (delta && delta !== 'DONE') yield delta;
+      const parsed = parseSseFrame(buffer);
+      if (parsed === 'DONE') doneSeen = true;
+      else if (parsed !== undefined) {
+        const result = consumeChunk(parsed);
+        if (result.error) {
+          statusOverride = 'error';
+          throw new Error('OpenRouter returned a streaming provider error.');
+        }
+        if (result.delta) yield result.delta;
+      }
     }
+  } catch (error) {
+    if (abortSignal.aborted || (error instanceof Error && error.name === 'AbortError')) statusOverride = 'cancelled';
+    else if (statusOverride === undefined) statusOverride = responseReceived ? 'interrupted' : 'error';
+    throw error;
   } finally {
-    if (abortSignal.aborted) await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    if (reader) {
+      if (abortSignal.aborted || !bodyDone) await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    reportFinalUsage();
   }
 }
 

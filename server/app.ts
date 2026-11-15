@@ -7,6 +7,7 @@ import type { ChatHistoryTurn, PdfAttachmentPayload } from '../src/types/assista
 import type { PdfKnowledgeBase } from './knowledge-base.js';
 import { extractPdfText } from './knowledge-base.js';
 import { getAIProviderConfig, getConfiguredAIProviders, namespacedModel } from './ai-provider.js';
+import { logOpenRouterUsage, type OpenRouterUsageReporter } from './ai-usage.js';
 import { getAllConfiguredModelCatalog, validateModelChoice } from './model-catalog.js';
 import { authenticationMiddleware } from './auth.js';
 import { requirePrincipal, requireRole } from './auth.js';
@@ -89,7 +90,8 @@ export type TextStream = (
   retrievedKnowledge: string[],
   history: ChatHistoryTurn[],
   attachment?: PdfAttachmentPayload,
-  selectedModel?: string
+  selectedModel?: string,
+  reportUsage?: OpenRouterUsageReporter
 ) => AsyncIterable<string>;
 
 export function createApp(
@@ -400,7 +402,7 @@ export function createApp(
       let content = '';
       let showHrButton = false;
       const providerStarted = performance.now();
-      for await (const text of textStream(query, localAnswer, abortController.signal, retrievedKnowledge, history, attachment ?? undefined, selectedModel)) {
+      for await (const text of textStream(query, localAnswer, abortController.signal, retrievedKnowledge, history, attachment ?? undefined, selectedModel, (usage) => logOpenRouterUsage(request.requestId, usage))) {
         if (abortController.signal.aborted) return;
         if (content.length + text.length > MAX_MODEL_OUTPUT_CHARS) throw new Error('OUTPUT_LIMIT');
         content += text;
@@ -639,7 +641,7 @@ export function createApp(
     try {
       const providerStarted = performance.now();
       const source = textStream
-        ? textStream(query, localAnswer, abortController.signal, retrievedKnowledge, history, attachment ?? undefined, selectedModel)
+        ? textStream(query, localAnswer, abortController.signal, retrievedKnowledge, history, attachment ?? undefined, selectedModel, (usage) => logOpenRouterUsage(request.requestId, usage))
         : streamFallback();
       await Promise.race([
         (async () => {

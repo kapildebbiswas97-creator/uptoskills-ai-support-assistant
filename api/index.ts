@@ -57,7 +57,8 @@ async function buildApp(): Promise<Express> {
     retrievedKnowledge,
     history,
     attachment,
-    selectedModel
+    selectedModel,
+    reportUsage
   ) {
     const namespaced = selectedModel
       ? splitNamespacedModel(selectedModel)
@@ -87,7 +88,9 @@ async function buildApp(): Promise<Express> {
         retrievedKnowledge,
         history,
         attachment,
-        selectedModel
+        selectedModel,
+        undefined,
+        reportUsage
       );
     }
   };

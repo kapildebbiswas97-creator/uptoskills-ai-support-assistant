@@ -33,12 +33,15 @@ export function recordMetric(name: string, value: number, labels: Record<string,
   }
 }
 
-function safeFields(fields: Record<string, unknown>): Record<string, string | number | boolean> {
-  const safe: Record<string, string | number | boolean> = {};
+const safeUsageCounters = new Set(['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens', 'reasoningTokens']);
+
+function safeFields(fields: Record<string, unknown>): Record<string, string | number | boolean | null> {
+  const safe: Record<string, string | number | boolean | null> = {};
   for (const [key, value] of Object.entries(fields)) {
-    if (/(authorization|token|password|secret|api.?key|uri|url|email|query|content|prompt|filename|subject|tenant|documentId)/i.test(key)) continue;
+    if (/(authorization|token|password|secret|api.?key|uri|url|email|query|content|prompt|filename|subject|tenant|documentId)/i.test(key) && !safeUsageCounters.has(key)) continue;
     if (typeof value === 'number' && Number.isFinite(value)) safe[key] = value;
     else if (typeof value === 'boolean') safe[key] = value;
+    else if (value === null && key === 'serverToolCostUsd') safe[key] = null;
     else if (typeof value === 'string' && value.length <= 200) safe[key] = value;
   }
   return safe;

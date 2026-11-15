@@ -35,7 +35,8 @@ async function start() {
     retrievedKnowledge,
     history,
     attachment,
-    selectedModel
+    selectedModel,
+    reportUsage
   ) {
     const namespaced = selectedModel ? splitNamespacedModel(selectedModel) : undefined;
     const provider = namespaced?.provider ?? (configuredAIProviders[0]?.provider || 'openrouter');
@@ -58,7 +59,9 @@ async function start() {
         retrievedKnowledge,
         history,
         attachment,
-        selectedModel
+        selectedModel,
+        undefined,
+        reportUsage
       );
     }
   };
