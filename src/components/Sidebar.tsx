@@ -5,6 +5,7 @@ import {
   History,
   Inbox,
   LifeBuoy,
+  LogOut,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -33,6 +34,8 @@ interface SidebarProps {
   onCloseMobile: () => void;
   showHrEscalations: boolean;
   showHrMeetings: boolean;
+  userEmail?: string;
+  onSignOut?: () => void;
 }
 
 export function Sidebar({
@@ -50,6 +53,8 @@ export function Sidebar({
   onCloseMobile,
   showHrEscalations,
   showHrMeetings,
+  userEmail,
+  onSignOut,
 }: SidebarProps) {
   const navItems: { id: AppView; label: string; icon: typeof Compass }[] = [
     { id: AppView.Welcome, label: 'Welcome & Topics', icon: Compass },
@@ -236,6 +241,38 @@ export function Sidebar({
               })
             )}
           </div>
+        </div>
+      )}
+
+      {/* User Account & Sign Out */}
+      {(!collapsed || isMobileDrawer) && onSignOut && (
+        <div className="border-t border-white/[0.06] px-3.5 py-2.5 flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium text-[#CBD5E1] truncate">{userEmail || 'Account'}</p>
+            <p className="text-[10px] text-[#64748B] truncate">Verified Session</p>
+          </div>
+          <button
+            type="button"
+            onClick={onSignOut}
+            aria-label="Sign out"
+            title="Sign out"
+            className="rounded p-1.5 text-[#94A3B8] hover:bg-white/[0.05] hover:text-red-400 transition-colors"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+      {collapsed && !isMobileDrawer && onSignOut && (
+        <div className="border-t border-white/[0.06] p-2 flex justify-center">
+          <button
+            type="button"
+            onClick={onSignOut}
+            aria-label="Sign out"
+            title="Sign out"
+            className="rounded p-2 text-[#94A3B8] hover:bg-white/[0.05] hover:text-red-400 transition-colors"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       )}
 

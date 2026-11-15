@@ -33,11 +33,14 @@ export function validateEnvironment(environment: NodeJS.ProcessEnv = process.env
   for (const [left, right] of pairs) {
     if (present(left) !== present(right)) issues.push(`${left} and ${right} must be configured together`);
   }
-  const oidc = ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URL'].some(present);
-  if (oidc && (!present('AUTH_ISSUER') || !present('AUTH_AUDIENCE'))) issues.push('AUTH_ISSUER and AUTH_AUDIENCE are required together');
+  const supabaseConfigured = present('SUPABASE_URL');
+  const oidc = supabaseConfigured || ['AUTH_ISSUER', 'AUTH_AUDIENCE', 'AUTH_JWKS_URL'].some(present);
+  if (oidc && !supabaseConfigured && (!present('AUTH_ISSUER') || !present('AUTH_AUDIENCE'))) issues.push('AUTH_ISSUER and AUTH_AUDIENCE are required together');
   if (environment.NODE_ENV === 'production' && oidc && !present('AUTH_ROLE_MAPPING')) issues.push('AUTH_ROLE_MAPPING is required when OIDC is enabled in production');
   if (present('AUTH_ISSUER')) validateHttpsUrl(environment.AUTH_ISSUER!, 'AUTH_ISSUER', environment.NODE_ENV, issues);
   if (present('AUTH_JWKS_URL')) validateHttpsUrl(environment.AUTH_JWKS_URL!, 'AUTH_JWKS_URL', environment.NODE_ENV, issues);
+  if (present('SUPABASE_URL')) validateHttpsUrl(environment.SUPABASE_URL!, 'SUPABASE_URL', environment.NODE_ENV, issues);
+  if (present('VITE_SUPABASE_URL')) validateHttpsUrl(environment.VITE_SUPABASE_URL!, 'VITE_SUPABASE_URL', environment.NODE_ENV, issues);
   if (present('MALWARE_SCANNER_URL')) validateHttpsUrl(environment.MALWARE_SCANNER_URL!, 'MALWARE_SCANNER_URL', environment.NODE_ENV, issues);
   if (present('MONGODB_URI')) {
     try {
@@ -99,9 +102,11 @@ export function validateEnvironment(environment: NodeJS.ProcessEnv = process.env
   }
 
   if (staging) {
-    for (const name of ['MONGODB_URI', 'MONGODB_DATABASE', 'AUTH_ISSUER', 'AUTH_AUDIENCE', 'DATABASE_URL', 'DATABASE_INGEST_URL', 'AUTH_ROLE_MAPPING', 'MALWARE_SCANNER_URL', 'MALWARE_SCANNER_TOKEN']) {
+    for (const name of ['MONGODB_URI', 'MONGODB_DATABASE', 'DATABASE_URL', 'DATABASE_INGEST_URL', 'AUTH_ROLE_MAPPING', 'MALWARE_SCANNER_URL', 'MALWARE_SCANNER_TOKEN']) {
       requireOne([name], name);
     }
+    requireOne(['AUTH_ISSUER', 'SUPABASE_URL'], 'AUTH_ISSUER');
+    requireOne(['AUTH_AUDIENCE', 'SUPABASE_URL'], 'AUTH_AUDIENCE');
     requireOne(['GEMINI_API_KEY', 'GOOGLE_API_KEY'], 'A Gemini embedding API key');
     requireOne(['OPENROUTER_API_KEY', 'AI_API_KEY', 'GROQ_API_KEY', 'CLOUDFLARE_API_TOKEN', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY', 'MISTRAL_API_KEY', 'REQUESTY_API_KEY'], 'A supported AI provider API key');
     requireOne(['RLS_CONTEXT_KEY_ID'], 'RLS_CONTEXT_KEY_ID');

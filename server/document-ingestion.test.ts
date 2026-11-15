@@ -46,11 +46,21 @@ test('configured scanner adapter sends file bytes with server token and accepts 
   const priorFetch = globalThis.fetch;
   let authorization = '';
   let bodySize = 0;
-  globalThis.fetch = async (_input, init) => {
-    authorization = new Headers(init?.headers).get('authorization') ?? '';
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const rawHeaders = init?.headers;
+    if (rawHeaders && typeof (rawHeaders as Headers).get === 'function') {
+      authorization = (rawHeaders as Headers).get('authorization') ?? '';
+    } else if (rawHeaders && typeof rawHeaders === 'object') {
+      authorization = (rawHeaders as Record<string, string>)['authorization'] ?? (rawHeaders as Record<string, string>)['Authorization'] ?? '';
+    }
     bodySize = (init?.body as Uint8Array).byteLength;
-    return new Response(JSON.stringify({ status: 'clean' }), { status: 200, headers: { 'content-type': 'application/json' } });
-  };
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ status: 'clean' }),
+    } as unknown as Response;
+  }) as typeof globalThis.fetch;
   try {
     const scanner = createMalwareScanner({ NODE_ENV: 'production', MALWARE_SCANNER_URL: 'https://scan.example/v1/scan', MALWARE_SCANNER_TOKEN: 'test-token' });
     assert.ok(scanner);

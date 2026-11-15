@@ -76,7 +76,7 @@ test('protected operations return 401 for missing authentication when OIDC is no
 
 test('valid signed token maps only recognized roles and trusted tenant claims', async () => {
   const claims = await verifyAccessToken(await token({ roles: ['knowledge_manager', 'root', 'user'] }), settings, resolver);
-  assert.deepEqual(claims, { subject: 'subject-1', roles: ['knowledge_manager', 'user'], tenantId: 'tenant-a' });
+  assert.deepEqual(claims, { subject: 'subject-1', roles: ['knowledge_manager', 'user'], tenantId: 'tenant-a', emailVerified: false });
 });
 
 test('expired, not-yet-valid, wrong-audience, wrong-issuer, invalid-signature, and malformed tokens are rejected', async () => {

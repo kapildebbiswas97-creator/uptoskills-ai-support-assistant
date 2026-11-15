@@ -244,26 +244,35 @@ interface ParsedDocument {
   segments?: ExtractedSegment[];
 }
 
+async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
+  let module;
+  try {
+    module = await import('pdf-parse');
+  } catch {
+    throw new Error('PDF_PROCESSING_UNAVAILABLE');
+  }
+  const parser = new module.PDFParse({ data: bytes });
+  try {
+    const result = await parser.getText();
+    return { text: result.text, pages: result.pages.map((page: { num: number; text: string }) => ({ num: page.num, text: page.text })) };
+  } finally {
+    await parser.destroy();
+  }
+}
+
 async function parseInWorker(extension: string, bytes: Buffer): Promise<ParsedDocument> {
+  // PDF parsing uses pdfjs-dist which manages its own worker threads internally.
+  // Running pdf-parse inside a Node Worker thread causes @napi-rs/canvas heap
+  // corruption on Windows (exit code 0xC0000005). Parse PDFs directly instead.
+  if (extension === '.pdf') {
+    return parsePdf(bytes);
+  }
   const source = `
     const { parentPort, workerData } = require('node:worker_threads');
     (async () => {
       const data = Buffer.from(workerData.bytes);
       const extension = workerData.extension;
-      if (extension === '.pdf') {
-        let module;
-        try {
-          module = await import('pdf-parse');
-        } catch {
-          parentPort.postMessage({ error: 'PDF_PROCESSING_UNAVAILABLE' });
-          return;
-        }
-        const parser = new module.PDFParse({ data });
-        try {
-          const result = await parser.getText();
-          parentPort.postMessage({ text: result.text, pages: result.pages.map(page => ({ num: page.num, text: page.text })) });
-        } finally { await parser.destroy(); }
-      } else if (extension === '.docx') {
+      if (extension === '.docx') {
         const module = await import('mammoth');
         const mammoth = module.default || module;
         const result = await mammoth.convertToHtml({ buffer: data });
@@ -318,17 +327,20 @@ async function parseInWorker(extension: string, bytes: Buffer): Promise<ParsedDo
   const worker = new Worker(source, {
     eval: true,
     workerData: { extension, bytes: new Uint8Array(bytes) },
-    resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
   });
   activeParserWorkers += 1;
   return new Promise<ParsedDocument>((resolve, reject) => {
     let settled = false;
-    const finish = (error?: Error, result?: ParsedDocument) => {
+    const finish = async (error?: Error, result?: ParsedDocument) => {
       if (settled) return;
       settled = true;
       activeParserWorkers -= 1;
       clearTimeout(timeout);
-      void worker.terminate();
+      try {
+        await worker.terminate();
+      } catch {
+        // Ignore worker termination errors
+      }
       if (error) reject(error);
       else resolve(result!);
     };

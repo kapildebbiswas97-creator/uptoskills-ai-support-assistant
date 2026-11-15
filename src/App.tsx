@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AuthScreen, type AuthMode } from './components/AuthScreen';
+import { BrandMark } from './components/BrandMark';
 import { ChatConsole } from './components/ChatConsole';
 import { ConversationHistory } from './components/ConversationHistory';
 import { HumanSupportEscalation } from './components/HumanSupportEscalation';
@@ -20,6 +22,8 @@ import {
   QuickActionItem,
 } from './types/assistant';
 import type { AssistantReplyResult } from './utils/assistantEngine';
+import { apiFetch } from './utils/apiClient';
+import { getCurrentUser, onAuthStateChange, signOut } from './utils/supabaseClient';
 
 const STORAGE_KEY = 'uptoskills-assistant-history-v1';
 const AUDIENCE_STORAGE_KEY = 'uptoskills-assistant-audience-v1';
@@ -78,7 +82,8 @@ export default function App() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     null
   );
-  const [session, setSession] = useState<{ checked: boolean; authenticated: boolean; roles: string[]; message: string }>({ checked: false, authenticated: false, roles: [], message: '' });
+  const [session, setSession] = useState<{ checked: boolean; authenticated: boolean; roles: string[]; message: string; email?: string }>({ checked: false, authenticated: false, roles: [], message: '' });
+  const [authMode, setAuthMode] = useState<AuthMode>('signIn');
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -100,22 +105,76 @@ export default function App() {
     message: AssistantMessage;
   } | null>(null);
 
+  const checkSession = useCallback(async () => {
+    try {
+      const user = await getCurrentUser();
+      const response = await apiFetch('/api/session');
+      const result = await response.json() as { roles?: string[]; error?: string };
+      if (!response.ok) {
+        setSession({
+          checked: true,
+          authenticated: false,
+          roles: [],
+          message: result.error || 'A verified sign-in is required.',
+          email: user?.email,
+        });
+        return;
+      }
+      setSession({
+        checked: true,
+        authenticated: true,
+        roles: Array.isArray(result.roles) ? result.roles : [],
+        message: '',
+        email: user?.email,
+      });
+    } catch {
+      setSession({
+        checked: true,
+        authenticated: false,
+        roles: [],
+        message: 'The sign-in service could not be reached.',
+      });
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
-    void fetch('/api/session', { credentials: 'same-origin' })
-      .then(async (response) => {
-        const result = await response.json() as { roles?: string[]; error?: string };
-        if (!active) return;
-        if (!response.ok) {
-          setSession({ checked: true, authenticated: false, roles: [], message: result.error || 'A verified sign-in is required.' });
-          return;
-        }
-        setSession({ checked: true, authenticated: true, roles: Array.isArray(result.roles) ? result.roles : [], message: '' });
-      })
-      .catch(() => {
-        if (active) setSession({ checked: true, authenticated: false, roles: [], message: 'The sign-in service could not be reached.' });
-      });
-    return () => { active = false; };
+    void checkSession();
+
+    const { data: { subscription } } = onAuthStateChange(async (event) => {
+      if (!active) return;
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        void checkSession();
+      } else if (event === 'SIGNED_OUT') {
+        setSession({
+          checked: true,
+          authenticated: false,
+          roles: [],
+          message: 'Signed out successfully.',
+        });
+      } else if (event === 'PASSWORD_RECOVERY') {
+        setAuthMode('resetPassword');
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription?.unsubscribe();
+    };
+  }, [checkSession]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    setSession({
+      checked: true,
+      authenticated: false,
+      roles: [],
+      message: 'Signed out successfully.',
+    });
+    setConversations([]);
+    setActiveConversationId(null);
+    setActiveView(AppView.Welcome);
+    setAuthMode('signIn');
   }, []);
 
   useEffect(() => {
@@ -136,7 +195,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    void fetch('/api/models')
+    void apiFetch('/api/models')
       .then(async (response) => {
         if (!response.ok) throw new Error('Could not load models');
         return await response.json() as { models?: AIModelOption[]; defaultModel?: string; modelAvailable?: boolean };
@@ -266,7 +325,7 @@ export default function App() {
           timestamp,
         };
         try {
-          const response = await fetch('/api/chat/stream', {
+          const response = await apiFetch('/api/chat/stream', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -462,6 +521,30 @@ export default function App() {
     [startNewConversationWithPrompt]
   );
 
+  if (!session.checked) {
+    return (
+      <div className="flex h-dvh w-full items-center justify-center bg-[#0B1220]">
+        <div className="flex flex-col items-center gap-4">
+          <BrandMark className="h-10 w-24 animate-pulse" />
+          <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
+            <span className="h-2 w-2 rounded-full bg-[#38BDF8] animate-ping" />
+            <span>Connecting to UpToSkills secure session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session.authenticated) {
+    return (
+      <AuthScreen
+        initialMode={authMode}
+        onSuccess={() => void checkSession()}
+        defaultEmail={session.email}
+      />
+    );
+  }
+
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[#0B1220] text-[#F8FAFC]">
       <Sidebar
@@ -471,6 +554,8 @@ export default function App() {
         audience={audience}
         showHrEscalations={session.authenticated && session.roles.includes('support_agent')}
         showHrMeetings={session.authenticated && session.roles.includes('support_agent')}
+        userEmail={session.email}
+        onSignOut={handleSignOut}
         collapsed={sidebarCollapsed}
         mobileOpen={mobileSidebarOpen}
         onSelectView={(view) => {

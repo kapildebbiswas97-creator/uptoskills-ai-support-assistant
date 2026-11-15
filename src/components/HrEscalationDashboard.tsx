@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Inbox, Menu, RefreshCw, Send } from 'lucide-react';
+import { apiFetch } from '../utils/apiClient';
 
 type Status = 'open' | 'in_progress' | 'resolved' | 'closed';
 interface HrTicket {
@@ -51,7 +52,7 @@ export function HrEscalationDashboard({ onOpenMobileSidebar }: { onOpenMobileSid
     try {
       const query = new URLSearchParams({ page: String(page), pageSize: '20' });
       if (statusFilter) query.set('status', statusFilter);
-      const response = await fetch(`/api/escalations/admin/escalations?${query}`, { credentials: 'same-origin' });
+      const response = await apiFetch(`/api/escalations/admin/escalations?${query}`, { credentials: 'same-origin' });
       const result = await response.json() as { tickets?: HrTicket[]; pagination?: { total: number }; error?: string };
       if (!response.ok) throw new Error(result.error || 'The authorised HR queue is unavailable.');
       setTickets(result.tickets ?? []);
@@ -70,7 +71,7 @@ export function HrEscalationDashboard({ onOpenMobileSidebar }: { onOpenMobileSid
     setError('');
     setSuccess('');
     try {
-      const response = await fetch(`/api/escalations/admin/escalations/${encodeURIComponent(ticketId)}`, { credentials: 'same-origin' });
+      const response = await apiFetch(`/api/escalations/admin/escalations/${encodeURIComponent(ticketId)}`, { credentials: 'same-origin' });
       const result = await response.json() as { ticket?: HrTicket; error?: string };
       if (!response.ok || !result.ticket) throw new Error(result.error || 'Ticket details are unavailable.');
       setSelected(result.ticket);
@@ -85,7 +86,7 @@ export function HrEscalationDashboard({ onOpenMobileSidebar }: { onOpenMobileSid
     setError('');
     setSuccess('');
     try {
-      const response = await fetch(`/api/escalations/admin/escalations/${encodeURIComponent(selected.id)}`, {
+      const response = await apiFetch(`/api/escalations/admin/escalations/${encodeURIComponent(selected.id)}`, {
         method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, expectedVersion: selected.version }),
       });
@@ -109,7 +110,7 @@ export function HrEscalationDashboard({ onOpenMobileSidebar }: { onOpenMobileSid
     setError('');
     setSuccess('');
     try {
-      const response = await fetch(`/api/escalations/admin/escalations/${encodeURIComponent(selected.id)}/notes`, {
+      const response = await apiFetch(`/api/escalations/admin/escalations/${encodeURIComponent(selected.id)}/notes`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: note.trim(), expectedVersion: selected.version }),
       });

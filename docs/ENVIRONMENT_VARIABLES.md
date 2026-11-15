@@ -34,6 +34,71 @@ The staging validator requires MongoDB, OIDC, PostgreSQL reader/writer URLs, an 
 
 At runtime, `APP_ENV=staging`, `NODE_ENV=staging`, or Vercel's `VERCEL_ENV=preview` makes the model catalog and chat endpoints require a verified principal by default. `ALLOW_ANONYMOUS_CHAT` is optional and accepts only `true` or `false`; staging validation accepts `true` only when `ANONYMOUS_CHAT_APPROVED=true` is also set. No such product approval is configured for this verification. Non-staging defaults remain unchanged.
 
+## Supabase Authentication Configuration
+
+### 1. Browser (Public) Environment Variables
+
+These variables are built into the client bundle and are visible to users. Never place service-role keys, database passwords, or OAuth client secrets in these variables.
+
+- `VITE_SUPABASE_URL`: The project URL found in the Supabase Dashboard (`https://<project-ref>.supabase.co`).
+- `VITE_SUPABASE_PUBLISHABLE_KEY`: The public API key (anon key or publishable key) intended for browser client use.
+
+### 2. Server-Side Environment Variables (Protected & Server-Only)
+
+These variables are consumed by the Express backend and Vercel Serverless Functions. They are never delivered to the client.
+
+- `SUPABASE_URL`: The project URL (`https://<project-ref>.supabase.co`). When set, automatically derives:
+  - `AUTH_ISSUER`: `https://<project-ref>.supabase.co/auth/v1`
+  - `AUTH_AUDIENCE`: `authenticated`
+  - `AUTH_JWKS_URL`: `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`
+- `AUTH_ISSUER`: Explicit issuer override if custom auth domain is used.
+- `AUTH_AUDIENCE`: Explicit audience override (default `authenticated`).
+- `AUTH_JWKS_URL`: Explicit JWKS endpoint override.
+- `AUTH_ROLES_CLAIM`: Name of the signed claim containing assigned application roles (default `roles`).
+- `AUTH_TENANT_CLAIM`: Name of the signed claim containing trusted tenant ID (default `org_id`).
+- `AUTH_ROLE_MAPPING`: JSON mapping from identity-provider role strings to application roles (`super_admin`, `admin`, `support_agent`, `knowledge_manager`, `user`).
+- `REQUIRE_VERIFIED_EMAIL`: When `true`, rejects JWTs without confirmed email (`email_confirmed_at`). Default `true` when Supabase is configured.
+
+### 3. Supabase Dashboard Setup Checklist
+
+1. **Authentication Settings**:
+   - Under **Authentication -> URL Configuration**:
+     - Set **Site URL** to your canonical site or preview URL (e.g. `https://<preview-domain>.vercel.app`).
+     - Under **Redirect URLs**, add:
+       - `https://<preview-domain>.vercel.app/**`
+       - `https://<production-domain>.com/**`
+       - `http://localhost:3000/**` (for local development)
+   - Under **Authentication -> Email**:
+     - Keep **Confirm email** enabled.
+     - Configure password reset redirect path to point to `/` or the application root.
+
+2. **Google Provider Setup**:
+   - In Google Cloud Console:
+     - Create a Web Application OAuth 2.0 Client ID.
+     - Add authorized JavaScript origins:
+       - `https://<project-ref>.supabase.co`
+       - `https://<preview-domain>.vercel.app`
+     - Add authorized redirect URI (from Supabase Dashboard):
+       - `https://<project-ref>.supabase.co/auth/v1/callback`
+   - In Supabase Dashboard:
+     - Navigate to **Authentication -> Providers -> Google**.
+     - Enable Google.
+     - Enter Client ID and Client Secret from Google Cloud Console.
+
+3. **Custom Access Token Hook**:
+   - Run migration `infra/postgres/migrations/005-supabase-auth-roles-and-hook.sql`.
+   - In Supabase Dashboard -> **Authentication -> Hooks**:
+     - Under **Custom Access Token Hook**, select `public.custom_access_token_hook`.
+     - Save. This ensures all minted JWTs contain server-controlled `roles` and `org_id` from `public.user_roles`, ignoring untrusted client metadata.
+
+4. **Role Provisioning Procedure**:
+   - By default, all new sign-ups are assigned the least-privileged `user` role via the `on_auth_user_created` trigger.
+   - To elevate an existing verified user to `support_agent` or `admin`, an authorized administrator executes:
+     ```sql
+     SELECT public.assign_user_role('target-user-uuid'::uuid, 'support_agent');
+     ```
+   - Generic administrators do not receive implicit HR privileges; only explicit `support_agent` assignment grants access to HR escalation and meeting queues.
+
 ## OIDC contract
 
 - `AUTH_ISSUER`: exact issuer URL expected in the signed `iss` claim; HTTPS outside local development.

@@ -9,6 +9,7 @@ export interface AuthenticatedPrincipal {
   roles: AppRole[];
   tenantId?: string;
   email?: string;
+  emailVerified?: boolean;
 }
 
 declare global {
@@ -24,9 +25,21 @@ let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 let jwksUrl: string | undefined;
 
 function authSettings() {
-  const issuer = process.env.AUTH_ISSUER;
-  const audience = process.env.AUTH_AUDIENCE;
-  const configuredJwksUrl = process.env.AUTH_JWKS_URL || (issuer ? `${issuer.replace(/\/$/, '')}/.well-known/jwks.json` : undefined);
+  const supabaseUrl = process.env.SUPABASE_URL?.trim();
+  let supabaseAuthUrl: string | undefined;
+  if (supabaseUrl) {
+    try {
+      const parsed = new URL(supabaseUrl);
+      if (parsed.pathname === '/' && !parsed.search && !parsed.hash) supabaseAuthUrl = `${parsed.origin}/auth/v1`;
+    } catch {
+      // Configuration validation reports an invalid Supabase project URL.
+    }
+  }
+  const issuer = process.env.AUTH_ISSUER || supabaseAuthUrl;
+  const audience = process.env.AUTH_AUDIENCE || (supabaseAuthUrl ? 'authenticated' : undefined);
+  const configuredJwksUrl = process.env.AUTH_JWKS_URL || (supabaseAuthUrl
+    ? `${supabaseAuthUrl}/.well-known/jwks.json`
+    : issuer ? `${issuer.replace(/\/$/, '')}/.well-known/jwks.json` : undefined);
   return { issuer, audience, configuredJwksUrl };
 }
 
@@ -36,6 +49,7 @@ export interface TokenVerificationSettings {
   rolesClaim?: string;
   tenantClaim?: string;
   roleMapping?: Record<string, AppRole>;
+  requireVerifiedEmail?: boolean;
 }
 
 function isSafeKeyUrl(value: string): boolean {
@@ -89,7 +103,12 @@ export async function authenticateRequest(request: Request): Promise<Authenticat
   if (!issuer || !audience || !configuredJwksUrl || !isSafeKeyUrl(issuer) || !isSafeKeyUrl(configuredJwksUrl) || !Object.keys(getRoleMapping()).length) throw new Error('AUTH_NOT_CONFIGURED');
   const token = authorization.slice(7).trim();
   if (!token || token.length > 16_384) throw new Error('INVALID_TOKEN');
-  return verifyAccessToken(token, { issuer, audience, roleMapping: getRoleMapping() }, keySet(configuredJwksUrl));
+  return verifyAccessToken(token, {
+    issuer,
+    audience,
+    roleMapping: getRoleMapping(),
+    requireVerifiedEmail: Boolean(process.env.SUPABASE_URL?.trim()),
+  }, keySet(configuredJwksUrl));
 }
 
 export async function verifyAccessToken(token: string, settings: TokenVerificationSettings, resolver: JWTVerifyGetKey): Promise<AuthenticatedPrincipal> {
@@ -101,13 +120,18 @@ export async function verifyAccessToken(token: string, settings: TokenVerificati
     maxTokenAge: '12h',
   });
   if (!payload.sub || payload.sub.length > 200 || /[\x00-\x1f]/.test(payload.sub)) throw new Error('INVALID_TOKEN');
+  const emailVerified = payload.email_verified === true || (typeof payload.email_confirmed_at === 'string' && payload.email_confirmed_at.length > 0);
+  if (settings.requireVerifiedEmail && !emailVerified) throw new Error('UNVERIFIED_EMAIL');
   const tenantClaim = settings.tenantClaim || process.env.AUTH_TENANT_CLAIM || 'org_id';
   const tenantId = payload[tenantClaim];
+  const roles = getRoles(payload, settings.rolesClaim, settings.roleMapping ?? getRoleMapping());
+  if (roles.length === 0) throw new Error('INVALID_ROLE_CLAIM');
   return {
     subject: payload.sub,
-    roles: getRoles(payload, settings.rolesClaim, settings.roleMapping ?? getRoleMapping()),
+    roles,
     ...(typeof tenantId === 'string' && tenantId.length > 0 && tenantId.length <= 200 && !/[\x00-\x1f]/.test(tenantId) ? { tenantId } : {}),
     ...(typeof payload.email === 'string' && payload.email.length <= 320 ? { email: payload.email } : {}),
+    emailVerified,
   };
 }
 

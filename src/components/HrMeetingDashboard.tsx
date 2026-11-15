@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarCheck2, Menu, RefreshCw } from 'lucide-react';
 import { browserTimeZone, validateConfirmationDraft } from '../utils/meetingRequest';
+import { apiFetch } from '../utils/apiClient';
 
 type Status = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
 interface HrRequest {
@@ -23,7 +24,7 @@ export function HrMeetingDashboard({ onOpenMobileSidebar }: { onOpenMobileSideba
     setLoading(true); setError('');
     try {
       const query = new URLSearchParams({ page: String(page), pageSize: '20' }); if (status) query.set('status', status);
-      const response = await fetch(`/api/admin/meeting-requests?${query}`, { credentials: 'same-origin' });
+      const response = await apiFetch(`/api/admin/meeting-requests?${query}`, { credentials: 'same-origin' });
       const body = await response.json() as { requests?: HrRequest[]; pagination?: { total: number }; error?: string };
       if (!response.ok) throw new Error(body.error || 'The authorised meeting queue is unavailable.');
       setRequests(Array.isArray(body.requests) ? body.requests : []); setTotal(body.pagination?.total ?? 0);
@@ -34,7 +35,7 @@ export function HrMeetingDashboard({ onOpenMobileSidebar }: { onOpenMobileSideba
 
   const open = async (id: string) => {
     setError(''); setMessage(''); setSelected(null);
-    try { const response = await fetch(`/api/admin/meeting-requests/${encodeURIComponent(id)}`, { credentials: 'same-origin' }); const body = await response.json() as { request?: HrRequest; error?: string }; if (!response.ok || !body.request) throw new Error(body.error || 'Request details are unavailable.'); setSelected(body.request); setTimeZone(body.request.timeZone); }
+    try { const response = await apiFetch(`/api/admin/meeting-requests/${encodeURIComponent(id)}`, { credentials: 'same-origin' }); const body = await response.json() as { request?: HrRequest; error?: string }; if (!response.ok || !body.request) throw new Error(body.error || 'Request details are unavailable.'); setSelected(body.request); setTimeZone(body.request.timeZone); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Request details are unavailable.'); }
   };
   const update = async (action: 'confirm' | 'reject') => {
@@ -47,7 +48,7 @@ export function HrMeetingDashboard({ onOpenMobileSidebar }: { onOpenMobileSideba
       const body = action === 'confirm'
         ? { expectedVersion: selected.version, startAt, endAt, timeZone, ...(location.trim() ? { location: location.trim() } : {}) }
         : { expectedVersion: selected.version, reason: reason.trim() };
-      const response = await fetch(`/api/admin/meeting-requests/${encodeURIComponent(selected.id)}/${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const response = await apiFetch(`/api/admin/meeting-requests/${encodeURIComponent(selected.id)}/${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const result = await response.json() as { request?: HrRequest; error?: string };
       if (!response.ok || !result.request) throw new Error(result.error || `Request was not ${action === 'confirm' ? 'confirmed' : 'rejected'}.`);
       setSelected(result.request); setMessage(action === 'confirm' ? 'Confirmed as a real HR scheduling decision. No calendar event or invitation was created.' : 'Request rejected. The explanation is visible to the requester.');

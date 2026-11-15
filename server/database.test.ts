@@ -44,6 +44,21 @@ test('signed RLS migration removes direct GUC trust and keeps the signing key be
   assert.match(migration, /REVOKE ALL ON TABLE app_private\.rls_context_keys FROM PUBLIC, uts_assistant_reader, uts_assistant_writer/i);
 });
 
+test('Supabase auth migration enforces server-controlled roles, forced RLS, and custom access token hook', async () => {
+  const migration = await readFile(path.resolve(process.cwd(), 'infra/postgres/migrations/005-supabase-auth-roles-and-hook.sql'), 'utf8');
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS public\.user_roles/i);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/i);
+  assert.match(migration, /FORCE ROW LEVEL SECURITY/i);
+  assert.match(migration, /CHECK \(role IN \('super_admin', 'admin', 'support_agent', 'knowledge_manager', 'user'\)\)/i);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION public\.custom_access_token_hook/i);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION public\.assign_user_role/i);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION public\.handle_new_user_role/i);
+  assert.match(migration, /VALUES \(NEW\.id, 'user', NULL\)/i);
+  assert.match(migration, /user_id = auth\.uid\(\)/i);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.custom_access_token_hook/i);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.custom_access_token_hook\(jsonb\) TO supabase_auth_admin/i);
+});
+
 test('tenant settings are transaction-local and cannot be set before secure migration/key readiness', async () => {
   const priorKeyId = process.env.RLS_CONTEXT_KEY_ID;
   const priorKey = process.env.RLS_CONTEXT_HMAC_KEY;

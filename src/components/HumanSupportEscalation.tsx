@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Inbox, LifeBuoy, Menu, Send, TicketCheck } from 'lucide-react';
 import { AudienceContext, EscalationCategory } from '../types/assistant';
 import { ESCALATION_CONSENT_TEXT, ESCALATION_CONSENT_VERSION } from '../utils/escalationConsent';
+import { apiFetch } from '../utils/apiClient';
 
 interface TicketSummary {
   id: string;
@@ -60,7 +61,7 @@ export function HumanSupportEscalation({
     setLoadingTickets(true);
     setTicketsError('');
     try {
-      const response = await fetch('/api/escalations/mine?page=1&pageSize=50', { credentials: 'same-origin' });
+      const response = await apiFetch('/api/escalations/mine?page=1&pageSize=50', { credentials: 'same-origin' });
       const result = await response.json() as { tickets?: TicketSummary[]; error?: string };
       if (!response.ok) throw new Error(result.error || 'Your requests are temporarily unavailable.');
       setTickets(Array.isArray(result.tickets) ? result.tickets : []);
@@ -79,7 +80,7 @@ export function HumanSupportEscalation({
     setSelectedTicket(null);
     setTicketsError('');
     try {
-      const response = await fetch(`/api/escalations/mine/${encodeURIComponent(ticketId)}`, { credentials: 'same-origin' });
+      const response = await apiFetch(`/api/escalations/mine/${encodeURIComponent(ticketId)}`, { credentials: 'same-origin' });
       const result = await response.json() as { ticket?: TicketSummary; error?: string };
       if (!response.ok || !result.ticket) throw new Error(result.error || 'Ticket details are unavailable.');
       setSelectedTicket(result.ticket);
@@ -107,7 +108,7 @@ export function HumanSupportEscalation({
 
     setSubmitting(true);
     try {
-      const response = await fetch('/api/escalations', {
+      const response = await apiFetch('/api/escalations', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current },

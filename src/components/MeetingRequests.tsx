@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarDays, Menu, Plus, Send, TicketCheck, Trash2 } from 'lucide-react';
 import { browserTimeZone, validateMeetingDraft, type MeetingTimeDraft } from '../utils/meetingRequest';
+import { apiFetch } from '../utils/apiClient';
 
 type Status = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
 interface MeetingRequest {
@@ -37,7 +38,7 @@ export function MeetingRequests({ authenticated, authMessage, conversationId, on
     if (!authenticated) return;
     setLoading(true); setError('');
     try {
-      const response = await fetch('/api/meeting-requests/mine?page=1&pageSize=50', { credentials: 'same-origin' });
+      const response = await apiFetch('/api/meeting-requests/mine?page=1&pageSize=50', { credentials: 'same-origin' });
       const body = await response.json() as { requests?: MeetingRequest[]; error?: string };
       if (!response.ok) throw new Error(body.error || 'Meeting requests could not be loaded.');
       setRequests(Array.isArray(body.requests) ? body.requests : []);
@@ -52,7 +53,7 @@ export function MeetingRequests({ authenticated, authMessage, conversationId, on
     if (invalid) { setError(invalid); return; }
     setSubmitting(true);
     try {
-      const response = await fetch('/api/meeting-requests', {
+      const response = await apiFetch('/api/meeting-requests', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current },
         body: JSON.stringify({ subject: subject.trim(), purpose: purpose.trim(), preferredTimes: options.map(({ startAt, endAt }) => ({ startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString() })), timeZone, ...(conversationId ? { conversationId } : {}) }),
       });
@@ -68,7 +69,7 @@ export function MeetingRequests({ authenticated, authMessage, conversationId, on
   const openRequest = async (id: string) => {
     setSelected(null); setError(''); setSuccess('');
     try {
-      const response = await fetch(`/api/meeting-requests/mine/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+      const response = await apiFetch(`/api/meeting-requests/mine/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
       const body = await response.json() as { request?: MeetingRequest; error?: string };
       if (!response.ok || !body.request) throw new Error(body.error || 'Request details are unavailable.');
       setSelected(body.request);
@@ -79,7 +80,7 @@ export function MeetingRequests({ authenticated, authMessage, conversationId, on
     if (!selected || selected.status !== 'pending') return;
     setError(''); setSuccess('');
     try {
-      const response = await fetch(`/api/meeting-requests/mine/${encodeURIComponent(selected.id)}/cancel`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: selected.version }) });
+      const response = await apiFetch(`/api/meeting-requests/mine/${encodeURIComponent(selected.id)}/cancel`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: selected.version }) });
       const body = await response.json() as { request?: MeetingRequest; error?: string };
       if (!response.ok || !body.request) throw new Error(body.error || 'Cancellation was not saved.');
       setSelected(body.request); setSuccess('Request cancelled.'); await loadMine();
