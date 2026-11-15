@@ -131,7 +131,10 @@ export default async function handler(
     const app = await getApp();
     return app(request, response);
   } catch (error) {
-    logEvent('serverless.initialization.failed', { errorType: error instanceof Error ? error.name : 'unknown' }, 'error');
+    logEvent('serverless.initialization.failed', {
+      errorType: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+    }, 'error');
 
     if (!response.headersSent) {
       return response.status(500).json({
