@@ -22,6 +22,7 @@ import { createMongoEscalationService, type EscalationService } from './escalati
 import { createMeetingRequestRouter } from './meeting-request-routes.js';
 import { createMongoMeetingRequestService, type MeetingRequestService } from './meeting-requests.js';
 import { randomUUID } from 'node:crypto';
+import { createRequestBodyParser } from './request-body.js';
 
 const MAX_PDF_BYTES = 3 * 1024 * 1024;
 const MAX_MODEL_OUTPUT_CHARS = 24_000;
@@ -103,17 +104,7 @@ export function createApp(
 ): Express {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({
-    limit: '4.2mb',
-    verify: (request, _response, body) => {
-      const path = request.url?.split('?')[0] || '';
-      if ((path === '/api/escalations' || path.startsWith('/api/escalations/') || path.startsWith('/api/meeting-requests') || path.startsWith('/api/admin/meeting-requests')) && body.byteLength > 16 * 1024) {
-        const error = new Error('Workflow request too large') as Error & { status: number };
-        error.status = 413;
-        throw error;
-      }
-    },
-  }));
+  app.use(createRequestBodyParser());
   app.use(requestObservabilityMiddleware);
   app.use(authenticationMiddleware);
   const requireChatAuthentication = options.requireChatAuthentication ?? requiresAuthenticatedChat();
