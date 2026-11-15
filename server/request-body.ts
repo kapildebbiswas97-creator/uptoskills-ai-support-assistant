@@ -24,15 +24,24 @@ export function createRequestBodyParser(): RequestHandler {
   });
 
   return (request, response, next) => {
+    let parsedBody: unknown;
+    try {
+      // On Vercel this is a lazy getter that parses the body when accessed.
+      parsedBody = request.body;
+    } catch {
+      return response.status(400).json({ error: 'Invalid request body' });
+    }
+
     // Vercel's Node adapter may parse JSON and consume the incoming stream
     // before invoking the function. Keep that parsed body and enforce the
     // same limits instead of asking body-parser to read a consumed stream.
-    if (request.body !== undefined || request.readableEnded || !request.readable) {
+    if (parsedBody !== undefined || request.readableEnded || !request.readable) {
+      if (parsedBody !== undefined) request.body = parsedBody;
       const contentLength = Number(request.get('content-length'));
       let byteLength = Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined;
-      if (byteLength === undefined && request.body !== undefined) {
+      if (byteLength === undefined && parsedBody !== undefined) {
         try {
-          const serialized = JSON.stringify(request.body);
+          const serialized = JSON.stringify(parsedBody);
           if (serialized !== undefined) byteLength = Buffer.byteLength(serialized);
         } catch {
           return response.status(400).json({ error: 'Invalid request body' });

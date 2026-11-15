@@ -43,6 +43,18 @@ test('does not invoke a stream parser when the serverless adapter consumed the r
   assert.equal(result.status, undefined);
 });
 
+test('returns a controlled 400 when the serverless body getter rejects malformed JSON', () => {
+  const middleware = createRequestBodyParser();
+  const request = middlewareRequest({ readable: false, readableEnded: false });
+  Object.defineProperty(request, 'body', { configurable: true, get() { throw new SyntaxError('malformed JSON'); } });
+  const { response, result } = middlewareResponse();
+  let continued = false;
+  middleware(request, response, (() => { continued = true; }) as NextFunction);
+  assert.equal(continued, false);
+  assert.equal(result.status, 400);
+  assert.deepEqual(result.body, { error: 'Invalid request body' });
+});
+
 test('enforces the smaller workflow limit for a serverless pre-parsed request', () => {
   const middleware = createRequestBodyParser();
   const request = middlewareRequest({ url: '/api/meeting-requests?source=web', get: () => String(17 * 1024) });
