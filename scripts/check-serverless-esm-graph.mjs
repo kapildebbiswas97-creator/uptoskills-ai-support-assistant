@@ -14,7 +14,7 @@ try {
   await mkdir(outputDir);
   const result = await build({
     absWorkingDir: root,
-    entryPoints: ['api/[...path].ts'],
+    entryPoints: ['api/index.ts'],
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -26,6 +26,7 @@ try {
     outExtension: { '.js': '.mjs' },
   });
   const errors = [];
+  let protectedRouteCount = 0;
   const pdfPackagePattern = /^(?:pdf-parse(?:\/.*)?|pdfjs-dist(?:\/.*)?|@napi-rs\/canvas(?:-.*)?)$/;
   const inputs = Object.entries(result.metafile.inputs);
   for (const [input, details] of inputs) {
@@ -84,13 +85,25 @@ try {
       const health = await healthResponse.json();
       if (health.status !== 'degraded' || health.databases?.mongo !== 'not_configured' || health.databases?.postgres !== 'not_configured') throw new Error('/api/health did not report missing Preview dependencies accurately');
       const routes = [
-        ['/api/session', 'GET'], ['/api/models', 'GET'], ['/api/escalations', 'POST'],
-        ['/api/meeting-requests', 'POST'], ['/api/chat', 'POST'], ['/api/chat/stream', 'POST'],
+        ['/api/session', 'GET'], ['/api/models', 'GET'],
+        ['/api/escalations', 'POST'], ['/api/escalations/mine', 'GET'], ['/api/escalations/mine/ticket-123', 'GET'],
+        ['/api/escalations/admin/escalations', 'GET'], ['/api/escalations/admin/escalations/ticket-123', 'GET'],
+        ['/api/escalations/admin/escalations/ticket-123', 'PATCH'], ['/api/escalations/admin/escalations/ticket-123/notes', 'POST'],
+        ['/api/meeting-requests', 'POST'], ['/api/meeting-requests/mine', 'GET'],
+        ['/api/meeting-requests/mine/request-123', 'GET'], ['/api/meeting-requests/mine/request-123/cancel', 'POST'],
+        ['/api/admin/meeting-requests', 'GET'], ['/api/admin/meeting-requests/request-123', 'GET'],
+        ['/api/admin/meeting-requests/request-123/confirm', 'POST'], ['/api/admin/meeting-requests/request-123/reject', 'POST'],
+        ['/api/conversations', 'GET'], ['/api/conversations/conversation-123/messages', 'GET'],
+        ['/api/documents', 'POST'], ['/api/documents/document-123', 'GET'], ['/api/documents/document-123', 'DELETE'],
+        ['/api/chat', 'POST'], ['/api/chat/stream', 'POST'],
       ];
+      protectedRouteCount = routes.length;
       for (const [url, method] of routes) {
         const response = await fetch(`${baseUrl}${url}`, { method, ...(method === 'POST' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'runtime-check' }) } : {}) });
         if (response.status !== 401) throw new Error(`${method} ${url} must reject unauthenticated Preview access with HTTP 401, got ${response.status}`);
       }
+      const missingRoute = await fetch(`${baseUrl}/api/not-a-real-route`);
+      if (missingRoute.status !== 404) throw new Error(`Unknown API routes must return an application 404, got ${missingRoute.status}`);
       if (attemptedPdfImports.length) throw new Error(`Serverless initialization loaded PDF parser dependencies: ${attemptedPdfImports.join(', ')}`);
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -103,7 +116,7 @@ try {
       else process.env[name] = value;
     }
   }
-  process.stdout.write(`Serverless ESM verification passed: ${inputs.length} source modules bundled to Node 26 ESM; runtime ${process.version} loaded the output, missing Preview integrations returned health 503, and six protected routes returned 401.\n`);
+  process.stdout.write(`Serverless ESM verification passed: ${inputs.length} source modules bundled to Node 26 ESM; runtime ${process.version} loaded the output, missing Preview integrations returned health 503, and ${protectedRouteCount} protected route patterns returned 401.\n`);
 } finally {
   await rm(tempDir, { recursive: true, force: true });
 }

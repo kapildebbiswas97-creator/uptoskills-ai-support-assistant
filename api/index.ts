@@ -16,6 +16,7 @@ import { createDocumentService } from '../server/document-ingestion.js';
 import { createDatabaseHealthCheck } from '../server/health.js';
 import { assertRuntimeEnvironment } from '../server/environment.js';
 import { logEvent } from '../server/observability.js';
+import { restoreRewrittenApiPath } from '../serverless/route-path.js';
 
 let appPromise: Promise<Express> | undefined;
 
@@ -117,6 +118,12 @@ export default async function handler(
   request: Request,
   response: Response
 ) {
+  // Vercel's file-function route for a Vite project does not match nested API
+  // paths. vercel.json rewrites each /api/* request to this single function
+  // and carries the original path in a query parameter. Restore only request.url;
+  // the original method, headers, body stream, abort events, and response stream
+  // continue through the shared Express app unchanged.
+  request.url = restoreRewrittenApiPath(request.url) ?? request.url;
   try {
     const app = await getApp();
     return app(request, response);
