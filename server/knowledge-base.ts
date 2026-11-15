@@ -1,6 +1,5 @@
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { PDFParse } from 'pdf-parse';
 
 const CHUNK_SIZE = 1400;
 const CHUNK_OVERLAP = 220;
@@ -22,6 +21,13 @@ export interface PdfKnowledgeBase {
   rebuild(): Promise<void>;
   search(query: string, limit?: number): string[];
   watchForChanges(onUpdate?: (documentCount: number, chunkCount: number) => void): () => Promise<void>;
+}
+
+export class PdfProcessingUnavailableError extends Error {
+  constructor() {
+    super('PDF_PROCESSING_UNAVAILABLE');
+    this.name = 'PdfProcessingUnavailableError';
+  }
 }
 
 function tokenize(value: string): string[] {
@@ -49,7 +55,17 @@ export function splitIntoChunks(text: string): string[] {
 }
 
 export async function extractPdfText(data: Uint8Array): Promise<string> {
-  const parser = new PDFParse({ data });
+  let parser: InstanceType<(typeof import('pdf-parse'))['PDFParse']>;
+  try {
+    // pdf-parse/worker loads the real native CanvasFactory and its platform
+    // binary. Keep both imports lazy so Node initializes PDF.js only when a
+    // PDF is actually processed, never while the serverless handler starts.
+    const { CanvasFactory } = await import('pdf-parse/worker');
+    const { PDFParse } = await import('pdf-parse');
+    parser = new PDFParse({ data, CanvasFactory });
+  } catch {
+    throw new PdfProcessingUnavailableError();
+  }
   try {
     const result = await parser.getText();
     return result.text;
@@ -105,7 +121,12 @@ export function createPdfKnowledgeBase(documentsDirectory = path.resolve(process
             nextChunks.push({ source: name, index: index + 1, text: part, termCounts, length: tokens.length });
           });
         } catch (error) {
-          process.stderr.write(`Could not index PDF ${name}: ${error instanceof Error ? error.message : 'parse error'}\n`);
+          const reason = error instanceof PdfProcessingUnavailableError
+            ? error.message
+            : error instanceof Error
+              ? error.name
+              : 'UNKNOWN_PDF_ERROR';
+          process.stderr.write(`Could not index knowledge document ${name}: ${reason}\n`);
         }
       }
 

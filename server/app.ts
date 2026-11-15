@@ -386,8 +386,12 @@ export function createApp(
         const text = await extractPdfText(Buffer.from(attachment.data, 'base64'));
         if (!text.trim()) throw new Error('The PDF has no extractable text.');
         retrievedKnowledge.push(`[Source: uploaded PDF ${attachment.name}]\n${text.slice(0, 50000)}`);
-      } catch {
-        response.status(400).json({ error: 'This PDF could not be read. Use a text-based PDF and try again.' });
+      } catch (error) {
+        if (error instanceof Error && error.message === 'PDF_PROCESSING_UNAVAILABLE') {
+          response.status(503).json({ error: 'PDF processing is unavailable in this runtime.' });
+        } else {
+          response.status(400).json({ error: 'This PDF could not be read. Use a text-based PDF and try again.' });
+        }
         return;
       }
     }
@@ -511,8 +515,12 @@ export function createApp(
         const text = await extractPdfText(Buffer.from(attachment.data, 'base64'));
         if (!text.trim()) throw new Error('The PDF has no extractable text.');
         uploadedDocuments.push(`[Source: uploaded PDF ${attachment.name}]\n${text.slice(0, 50000)}`);
-      } catch {
-        response.status(400).json({ error: 'This PDF could not be read. Use a text-based PDF and try again.' });
+      } catch (error) {
+        if (error instanceof Error && error.message === 'PDF_PROCESSING_UNAVAILABLE') {
+          response.status(503).json({ error: 'PDF processing is unavailable in this runtime.' });
+        } else {
+          response.status(400).json({ error: 'This PDF could not be read. Use a text-based PDF and try again.' });
+        }
         return;
       }
     }

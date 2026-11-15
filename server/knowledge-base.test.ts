@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -49,6 +50,44 @@ test('PDF knowledge base extracts local PDFs, retrieves relevant overlapping chu
     assert.equal(knowledge.documentCount, 2);
     assert.match(knowledge.search('How often is the attendance report submitted?')[0], /faq\.pdf/);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('PDF extraction remains available when the parser runtime is supported', async () => {
+  const text = await extractPdfText(makeTextPdf('Supported PDF parsing extracts this searchable text.'));
+  assert.match(text, /Supported PDF parsing extracts this searchable text/);
+});
+
+test('PDF parser dependency failure is controlled and does not abort knowledge-base rebuild', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'uts-pdf-unavailable-'));
+  const attemptedImports: string[] = [];
+  const importGuard = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === 'pdf-parse/worker' || specifier === 'pdf-parse') {
+        attemptedImports.push(specifier);
+        throw new Error('simulated unavailable PDF runtime dependency');
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+  try {
+    const pdf = makeTextPdf('This PDF cannot be indexed when its runtime dependency is unavailable.');
+    await assert.rejects(extractPdfText(pdf), {
+      name: 'PdfProcessingUnavailableError',
+      message: 'PDF_PROCESSING_UNAVAILABLE',
+    });
+
+    const docs = path.join(directory, 'docs');
+    await mkdir(docs);
+    await writeFile(path.join(docs, 'local-reference.pdf'), pdf);
+    const knowledge = createPdfKnowledgeBase(docs);
+    await assert.doesNotReject(knowledge.rebuild());
+    assert.equal(knowledge.documentCount, 0);
+    assert.deepEqual(knowledge.search('runtime dependency'), []);
+    assert.ok(attemptedImports.includes('pdf-parse/worker'));
+  } finally {
+    importGuard.deregister();
     await rm(directory, { recursive: true, force: true });
   }
 });

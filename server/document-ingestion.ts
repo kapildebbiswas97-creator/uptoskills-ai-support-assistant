@@ -251,7 +251,13 @@ async function parseInWorker(extension: string, bytes: Buffer): Promise<ParsedDo
       const data = Buffer.from(workerData.bytes);
       const extension = workerData.extension;
       if (extension === '.pdf') {
-        const module = await import('pdf-parse');
+        let module;
+        try {
+          module = await import('pdf-parse');
+        } catch {
+          parentPort.postMessage({ error: 'PDF_PROCESSING_UNAVAILABLE' });
+          return;
+        }
         const parser = new module.PDFParse({ data });
         try {
           const result = await parser.getText();

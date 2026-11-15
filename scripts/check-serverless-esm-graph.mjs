@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
+import { registerHooks } from 'node:module';
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { build } from 'esbuild';
 
@@ -25,9 +26,13 @@ try {
     outExtension: { '.js': '.mjs' },
   });
   const errors = [];
+  const pdfPackagePattern = /^(?:pdf-parse(?:\/.*)?|pdfjs-dist(?:\/.*)?|@napi-rs\/canvas(?:-.*)?)$/;
   const inputs = Object.entries(result.metafile.inputs);
   for (const [input, details] of inputs) {
     for (const edge of details.imports) {
+      if (edge.external && pdfPackagePattern.test(edge.path) && edge.kind !== 'dynamic-import') {
+        errors.push(`${input}: PDF runtime dependency '${edge.path}' is eagerly loaded with ${edge.kind}`);
+      }
       if (edge.external || !edge.original?.startsWith('.')) continue;
       const extension = path.extname(edge.original);
       if (!['.js', '.mjs', '.cjs'].includes(extension)) {
@@ -48,7 +53,21 @@ try {
   for (const name of environmentNames) delete process.env[name];
   process.env.NODE_ENV = 'production';
   process.env.VERCEL_ENV = 'preview';
+  const previousCwd = process.cwd();
+  const attemptedPdfImports = [];
+  const pdfImportGuard = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (pdfPackagePattern.test(specifier)) {
+        attemptedPdfImports.push(specifier);
+        throw new Error('PDF dependency must not load during serverless handler initialization');
+      }
+      return nextResolve(specifier, context);
+    },
+  });
   try {
+    // Keep this startup test independent from any PDFs a contributor may have
+    // added to the repository docs directory.
+    process.chdir(tempDir);
     const outputFile = path.join(outputDir, 'index.mjs');
     const { default: handler } = await import(pathToFileURL(outputFile).href);
     const server = createServer((request, response) => { void handler(request, response); });
@@ -72,10 +91,13 @@ try {
         const response = await fetch(`${baseUrl}${url}`, { method, ...(method === 'POST' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'runtime-check' }) } : {}) });
         if (response.status !== 401) throw new Error(`${method} ${url} must reject unauthenticated Preview access with HTTP 401, got ${response.status}`);
       }
+      if (attemptedPdfImports.length) throw new Error(`Serverless initialization loaded PDF parser dependencies: ${attemptedPdfImports.join(', ')}`);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
   } finally {
+    process.chdir(previousCwd);
+    pdfImportGuard.deregister();
     for (const [name, value] of previousEnvironment) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
