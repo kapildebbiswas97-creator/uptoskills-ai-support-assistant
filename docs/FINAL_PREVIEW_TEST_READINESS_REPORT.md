@@ -3,10 +3,10 @@
 **Date:** 2026-11-16
 **Repository:** `kapildebbiswas97-creator/uptoskills-ai-support-assistant`
 **Git Branch:** `release/uptoskills-vercel-2026-11-15`
-**Git Commit SHA:** `be280e8c87e0fa1b8b4e0f42acc6be5b07f3309f`
+**Git Commit SHA:** `458576361d77104c9f45ddfcea906504c4b1f7dd`
 **Vercel Project:** `uptoskills-ai-support-assistant`
-**Vercel Preview Deployment URL:** `https://uptoskills-ai-support-assistant-rdhhnem3s.vercel.app`
-**Vercel Deployment ID:** `dpl_8QyfKjQxe2gMne5RW4wqkL4XaZFN`
+**Vercel Preview Deployment URL:** `https://uptoskills-ai-support-assistant-jnv94nknb.vercel.app`
+**Vercel Deployment ID:** `dpl_36JwZuNBaYo4beDYZLkq6ePjVoXq`
 **Supabase Staging Project Ref:** `vymepfpxtfwkkoaykdny` (`https://vymepfpxtfwkkoaykdny.supabase.co`)
 
 ---
@@ -16,7 +16,7 @@
 **Verdict: PARTIALLY READY**
 
 - **Code, Security, & Architecture:** Fully repaired, hardened, and verified. 172/172 tests passing, clean TypeScript lint, clean production build, ESM graph check passing, and zero git diff check warnings.
-- **Deployed Vercel Preview:** Live and healthy at `https://uptoskills-ai-support-assistant-rdhhnem3s.vercel.app`. Serves the dark-mode web application at `/` (HTTP 200).
+- **Deployed Vercel Preview:** Live and healthy at `https://uptoskills-ai-support-assistant-jnv94nknb.vercel.app` (and branch alias `https://uptoskills-ai-sup-git-23dc39-kapildebbiswas97-creators-projects.vercel.app`). Serves the dark-mode web application at `/` (HTTP 200).
 - **Preview Security & Authentication:** Strict JWT validation active. All 24 protected route patterns reject unauthenticated requests with 401. Invalid tokens return 401. Health endpoint confirms `"authentication": "configured"`. Preview `AUTH_ROLE_MAPPING` was updated on Vercel to include `support_agent`. Real Supabase registration works and email confirmation enforcement is verified.
 - **Blockers for Full End-to-End Testing:** External service credentials for Preview scope (AI Model Provider, MongoDB connection, and PostgreSQL/pgvector connection) plus Supabase CLI access / DB credentials for running staging migration 005 and enabling the token hook in the Supabase Dashboard.
 
@@ -27,8 +27,8 @@
 | Component | Target / Value | Status |
 | --- | --- | --- |
 | GitHub Branch | `release/uptoskills-vercel-2026-11-15` | PUSHED & SYNCHRONIZED |
-| Commit SHA | `be280e8c87e0fa1b8b4e0f42acc6be5b07f3309f` | VERIFIED |
-| Vercel Deployment | `https://uptoskills-ai-support-assistant-rdhhnem3s.vercel.app` | LIVE (Preview) |
+| Commit SHA | `458576361d77104c9f45ddfcea906504c4b1f7dd` | VERIFIED |
+| Vercel Deployment | `https://uptoskills-ai-support-assistant-jnv94nknb.vercel.app` | LIVE (Preview) |
 | Supabase URL | `https://vymepfpxtfwkkoaykdny.supabase.co` | REACHABLE & VERIFIED |
 | Supabase Auth API | GoTrue v2.197.0 (`/auth/v1`) | HEALTHY |
 | Supabase JWKS | ES256 key (`kid: 1c684bc7-3ca4-4f91-b279-74aa4d456d71`) | ACTIVE & VERIFIED |
@@ -79,7 +79,7 @@ All six issues identified in Phase 10A were verified locally and deployed to the
 
 ## 5. Live Deployed Preview Acceptance Test Results
 
-Tests executed directly against `https://uptoskills-ai-support-assistant-rdhhnem3s.vercel.app` using origin-scoped development OIDC credentials:
+Tests executed directly against `https://uptoskills-ai-support-assistant-jnv94nknb.vercel.app` using origin-scoped development OIDC credentials:
 
 ### A. Deployment & Infrastructure
 - **Root Page (`/`):** **PASS** (HTTP 200, serves full HTML and bundled JS/CSS assets).
@@ -138,7 +138,7 @@ To transition from **PARTIALLY READY** to **READY FOR TESTING**, the following t
 Once the three service blockers are configured:
 
 1. **Access the Preview UI:**
-   - Navigate to `https://uptoskills-ai-support-assistant-rdhhnem3s.vercel.app` (authenticate via Vercel SSO if prompted by Deployment Protection).
+   - Navigate to `https://uptoskills-ai-support-assistant-jnv94nknb.vercel.app` (authenticate via Vercel SSO if prompted by Deployment Protection).
 2. **Sign Up / Log In:**
    - Click "Sign Up" and register with an email address.
    - Confirm the confirmation email in your inbox.
