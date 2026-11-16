@@ -153,20 +153,22 @@ export function createApp(
   app.get('/api/health', async (_request, response) => {
     const started = performance.now();
     const databases = databaseHealthCheck ? await databaseHealthCheck.check() : undefined;
-    const modelAvailable = Boolean(textStream);
+    const modelAvailable = Boolean(textStream && getConfiguredAIProviders().length > 0);
+    const vectorSearchAvailable = Boolean(knowledgeSearch && databases?.postgres === 'up' && databases.pgvector === true);
     const authenticationConfigured = isAuthenticationConfigured();
-    const unhealthy = isApplicationHealthDegraded(databases, modelAvailable, authenticationConfigured);
+    const rateLimitBackend = rateLimiter?.backend ?? 'none';
+    const unhealthy = isApplicationHealthDegraded(databases, modelAvailable, authenticationConfigured, process.env, rateLimitBackend);
     logEvent('health.check.complete', { requestId: _request.requestId, status: unhealthy ? 'degraded' : 'ok', mongo: databases?.mongo || 'not_checked', postgres: databases?.postgres || 'not_checked', model: modelAvailable ? 'configured' : 'not_configured', authentication: authenticationConfigured ? 'configured' : 'not_configured', durationMs: Math.round(performance.now() - started) }, unhealthy ? 'warn' : 'info');
     response.status(unhealthy ? 503 : 200).json({
       status: unhealthy ? 'degraded' : 'ok',
       knowledgeVersion: knowledge.version,
-      vectorSearch: Boolean(knowledgeSearch),
-      rateLimit: rateLimiter?.backend ?? 'none',
-      modelAvailable: Boolean(textStream),
+      vectorSearch: vectorSearchAvailable,
+      rateLimit: rateLimitBackend,
+      modelAvailable,
       pdfDocuments: pdfKnowledgeBase?.documentCount ?? 0,
       pdfChunks: pdfKnowledgeBase?.chunkCount ?? 0,
       ...(databases ? { databases } : {}),
-      ...(deploymentRequiresReadiness() ? { dependencies: { model: modelAvailable ? 'configured' : 'not_configured', authentication: authenticationConfigured ? 'configured' : 'not_configured' } } : {}),
+      ...(deploymentRequiresReadiness() ? { dependencies: { model: modelAvailable ? 'configured' : 'not_configured', authentication: authenticationConfigured ? 'configured' : 'not_configured', rateLimit: rateLimitBackend === 'redis' ? 'shared' : 'process_local' } } : {}),
     });
   });
 

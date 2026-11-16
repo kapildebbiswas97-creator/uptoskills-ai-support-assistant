@@ -27,12 +27,13 @@ export function isApplicationHealthDegraded(
   databases: DatabaseHealth | undefined,
   modelAvailable: boolean,
   authenticationConfigured: boolean,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  rateLimitBackend: 'redis' | 'memory' | 'none' = 'none'
 ): boolean {
   if (databases?.mongo === 'down' || databases?.postgres === 'down') return true;
   if (!deploymentRequiresReadiness(environment)) return false;
   return !databases || databases.mongo !== 'up' || databases.postgres !== 'up' ||
-    !modelAvailable || !authenticationConfigured;
+    !modelAvailable || !authenticationConfigured || rateLimitBackend !== 'redis';
 }
 
 export function createDatabaseHealthCheck(

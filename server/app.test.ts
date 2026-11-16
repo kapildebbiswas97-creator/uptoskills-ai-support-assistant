@@ -95,6 +95,30 @@ test('Express health and chat routes return local knowledge guidance', async () 
   });
 });
 
+test('health does not report model or vector search available without configured dependencies', async () => {
+  const providerVariables = [
+    'AI_PROVIDER', 'AI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
+    'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY', 'MISTRAL_API_KEY', 'REQUESTY_API_KEY',
+  ] as const;
+  const previous = new Map(providerVariables.map((name) => [name, process.env[name]]));
+  for (const name of providerVariables) delete process.env[name];
+  const textStream: TextStream = async function* () { yield 'unused'; };
+  const knowledgeSearch: KnowledgeSearch = async () => [];
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/health`);
+      const body = await response.json();
+      assert.equal(body.modelAvailable, false);
+      assert.equal(body.vectorSearch, false);
+    }, textStream, knowledgeSearch);
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test('model picker hides provider models until a provider key is configured', async () => {
   clearFreeModelCatalogCacheForTests();
   await withServer(async (baseUrl) => {

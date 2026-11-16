@@ -1,12 +1,18 @@
 import { createClient, type SupabaseClient, type Session, type AuthChangeEvent } from '@supabase/supabase-js';
+import { isGoogleOAuthEnabled } from './authOptions';
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+const googleOAuthEnabled = isGoogleOAuthEnabled(Boolean(supabaseUrl && supabaseKey), import.meta.env.VITE_SUPABASE_GOOGLE_OAUTH_ENABLED);
 
 let clientInstance: SupabaseClient | null = null;
 
 export function isSupabaseConfigured(): boolean {
   return Boolean(supabaseUrl && supabaseKey);
+}
+
+export function isGoogleOAuthConfigured(): boolean {
+  return googleOAuthEnabled;
 }
 
 export function getSupabaseClient(): SupabaseClient | null {
@@ -73,12 +79,19 @@ export async function signInWithEmail(email: string, password: string) {
 export async function signInWithGoogle(redirectTo?: string) {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase authentication is not configured.');
+  if (!googleOAuthEnabled) throw new Error('Google sign-in is not enabled for this deployment.');
   return client.auth.signInWithOAuth({
     provider: 'google',
     options: {
       redirectTo: redirectTo || (typeof window !== 'undefined' ? `${window.location.origin}` : undefined),
     },
   });
+}
+
+export async function resendSignUpVerification(email: string) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase authentication is not configured.');
+  return client.auth.resend({ type: 'signup', email: email.trim() });
 }
 
 export async function signOut() {

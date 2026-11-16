@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthScreen, type AuthMode } from './components/AuthScreen';
-import { BrandMark } from './components/BrandMark';
 import { ChatConsole } from './components/ChatConsole';
 import { ConversationHistory } from './components/ConversationHistory';
 import { HumanSupportEscalation } from './components/HumanSupportEscalation';
@@ -71,9 +70,7 @@ function formatTime(): string {
 }
 
 export default function App() {
-  const [conversations, setConversations] = useState<ConversationThread[]>(
-    loadStoredConversations
-  );
+  const [conversations, setConversations] = useState<ConversationThread[]>([]);
   const [audience, setAudience] = useState<AudienceContext>(loadStoredAudience);
   const [availableModels, setAvailableModels] = useState<AIModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState(loadStoredModel);
@@ -84,6 +81,8 @@ export default function App() {
   );
   const [session, setSession] = useState<{ checked: boolean; authenticated: boolean; roles: string[]; message: string; email?: string }>({ checked: false, authenticated: false, roles: [], message: '' });
   const [authMode, setAuthMode] = useState<AuthMode>('signIn');
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authNotice, setAuthNotice] = useState('');
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -105,7 +104,7 @@ export default function App() {
     message: AssistantMessage;
   } | null>(null);
 
-  const checkSession = useCallback(async () => {
+  const checkSession = useCallback(async (): Promise<boolean> => {
     try {
       const user = await getCurrentUser();
       const response = await apiFetch('/api/session');
@@ -118,7 +117,7 @@ export default function App() {
           message: result.error || 'A verified sign-in is required.',
           email: user?.email,
         });
-        return;
+        return false;
       }
       setSession({
         checked: true,
@@ -127,6 +126,7 @@ export default function App() {
         message: '',
         email: user?.email,
       });
+      return true;
     } catch {
       setSession({
         checked: true,
@@ -134,6 +134,7 @@ export default function App() {
         roles: [],
         message: 'The sign-in service could not be reached.',
       });
+      return false;
     }
   }, []);
 
@@ -141,7 +142,7 @@ export default function App() {
     let active = true;
     void checkSession();
 
-    const { data: { subscription } } = onAuthStateChange(async (event) => {
+    const { data: { subscription } } = onAuthStateChange((event) => {
       if (!active) return;
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         void checkSession();
@@ -152,8 +153,14 @@ export default function App() {
           roles: [],
           message: 'Signed out successfully.',
         });
+        setConversations([]);
+        setActiveConversationId(null);
+        setActiveView(AppView.Welcome);
+        setAuthDialogOpen(false);
+        try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* Ignore storage errors */ }
       } else if (event === 'PASSWORD_RECOVERY') {
         setAuthMode('resetPassword');
+        setAuthDialogOpen(true);
       }
     });
 
@@ -164,7 +171,17 @@ export default function App() {
   }, [checkSession]);
 
   const handleSignOut = useCallback(async () => {
-    await signOut();
+    try {
+      const result = await signOut();
+      if (result?.error) {
+        setAuthNotice('Sign out could not be confirmed. Please retry before leaving this device unattended.');
+        return;
+      }
+    } catch {
+      setAuthNotice('Sign out could not be confirmed. Please retry before leaving this device unattended.');
+      return;
+    }
+    setAuthNotice('');
     setSession({
       checked: true,
       authenticated: false,
@@ -172,18 +189,26 @@ export default function App() {
       message: 'Signed out successfully.',
     });
     setConversations([]);
+    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* Ignore storage errors */ }
     setActiveConversationId(null);
     setActiveView(AppView.Welcome);
     setAuthMode('signIn');
+    setAuthDialogOpen(false);
   }, []);
 
   useEffect(() => {
+    if (session.authenticated) setConversations(loadStoredConversations());
+  }, [session.authenticated]);
+
+  useEffect(() => {
+    if (!session.authenticated) return;
+    if (conversations.length === 0 && loadStoredConversations().length > 0) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
     } catch {
       // Ignore storage quota errors
     }
-  }, [conversations]);
+  }, [conversations, session.authenticated]);
 
   useEffect(() => {
     try {
@@ -194,6 +219,12 @@ export default function App() {
   }, [audience]);
 
   useEffect(() => {
+    if (!session.authenticated) {
+      setModelAvailable(false);
+      setAvailableModels([]);
+      setSelectedModel('');
+      return;
+    }
     let active = true;
     void apiFetch('/api/models')
       .then(async (response) => {
@@ -221,7 +252,7 @@ export default function App() {
         setSelectedModel('');
       });
     return () => { active = false; };
-  }, []);
+  }, [session.authenticated]);
 
   useEffect(() => {
     try {
@@ -508,8 +539,28 @@ export default function App() {
     );
   }, [activeConversation, dispatchAssistantResponse, errorState]);
 
+  const openAuthentication = useCallback((mode: AuthMode = 'signIn') => {
+    setAuthMode(mode);
+    setAuthDialogOpen(true);
+  }, []);
+
+  const completeAuthentication = useCallback(async () => {
+    const verified = await checkSession();
+    if (verified) {
+      setAuthDialogOpen(false);
+      setAuthNotice('');
+      setActiveView(AppView.Welcome);
+      return true;
+    }
+    return false;
+  }, [checkSession]);
+
   const handleSelectQuickAction = useCallback(
     (action: QuickActionItem) => {
+      if (!session.authenticated) {
+        openAuthentication('signIn');
+        return;
+      }
       if (action.opensEscalation) {
         setActiveView(AppView.Escalation);
         return;
@@ -518,56 +569,47 @@ export default function App() {
         startNewConversationWithPrompt(action.prompt, action.topicId);
       }
     },
-    [startNewConversationWithPrompt]
+    [openAuthentication, session.authenticated, startNewConversationWithPrompt]
   );
-
-  if (!session.checked) {
-    return (
-      <div className="flex h-dvh w-full items-center justify-center bg-[#0B1220]">
-        <div className="flex flex-col items-center gap-4">
-          <BrandMark className="h-10 w-24 animate-pulse" />
-          <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
-            <span className="h-2 w-2 rounded-full bg-[#38BDF8] animate-ping" />
-            <span>Connecting to UpToSkills secure session...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!session.authenticated) {
-    return (
-      <AuthScreen
-        initialMode={authMode}
-        onSuccess={() => void checkSession()}
-        defaultEmail={session.email}
-      />
-    );
-  }
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[#0B1220] text-[#F8FAFC]">
+      {authNotice && <div role="alert" className="fixed left-1/2 top-4 z-50 w-[min(92vw,36rem)] -translate-x-1/2 rounded-lg border border-amber-500/30 bg-amber-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">{authNotice}</div>}
       <Sidebar
-        conversations={conversations}
+        conversations={session.authenticated ? conversations : []}
         activeConversationId={activeConversationId}
         activeView={activeView}
         audience={audience}
         showHrEscalations={session.authenticated && session.roles.includes('support_agent')}
         showHrMeetings={session.authenticated && session.roles.includes('support_agent')}
+        authenticated={session.authenticated}
+        onSignIn={() => openAuthentication('signIn')}
         userEmail={session.email}
-        onSignOut={handleSignOut}
+        onSignOut={session.authenticated ? handleSignOut : undefined}
         collapsed={sidebarCollapsed}
         mobileOpen={mobileSidebarOpen}
         onSelectView={(view) => {
           setErrorState(null);
+          if (!session.authenticated && view !== AppView.Welcome) {
+            openAuthentication('signIn');
+            return;
+          }
           setActiveView(view);
         }}
         onSelectConversation={(id) => {
+          if (!session.authenticated) {
+            openAuthentication('signIn');
+            return;
+          }
           setErrorState(null);
           setActiveConversationId(id);
           setActiveView(AppView.Chat);
         }}
         onNewConversation={() => {
+          if (!session.authenticated) {
+            openAuthentication('signIn');
+            return;
+          }
           clearTimers();
           setIsLoading(false);
           setStreamingMessage(null);
@@ -583,13 +625,18 @@ export default function App() {
       {activeView === AppView.Welcome && (
         <WelcomeScreen
           audience={audience}
+          authenticated={session.authenticated}
           availableModels={availableModels}
           selectedModel={selectedModel}
           modelAvailable={modelAvailable}
           onChangeAudience={setAudience}
           onChangeModel={setSelectedModel}
           onSelectQuickAction={handleSelectQuickAction}
-          onSubmitQuestion={(q, attachment) => startNewConversationWithPrompt(q, undefined, attachment)}
+          onSubmitQuestion={(q, attachment) => {
+            if (session.authenticated) startNewConversationWithPrompt(q, undefined, attachment);
+            else openAuthentication('signIn');
+          }}
+          onSignIn={() => openAuthentication('signIn')}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
       )}
@@ -609,7 +656,7 @@ export default function App() {
           onSendMessage={handleSendInActiveChat}
           onCancelOrStop={handleCancelOrStop}
           onRetryFailed={handleRetryFailed}
-          onOpenEscalation={() => setActiveView(AppView.Escalation)}
+          onOpenEscalation={() => session.authenticated ? setActiveView(AppView.Escalation) : openAuthentication('signIn')}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
       )}
@@ -617,13 +664,18 @@ export default function App() {
       {activeView === AppView.Chat && !activeConversation && (
         <WelcomeScreen
           audience={audience}
+          authenticated={session.authenticated}
           availableModels={availableModels}
           selectedModel={selectedModel}
           modelAvailable={modelAvailable}
           onChangeAudience={setAudience}
           onChangeModel={setSelectedModel}
           onSelectQuickAction={handleSelectQuickAction}
-          onSubmitQuestion={(q, attachment) => startNewConversationWithPrompt(q, undefined, attachment)}
+          onSubmitQuestion={(q, attachment) => {
+            if (session.authenticated) startNewConversationWithPrompt(q, undefined, attachment);
+            else openAuthentication('signIn');
+          }}
+          onSignIn={() => openAuthentication('signIn')}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
         />
       )}
@@ -681,6 +733,17 @@ export default function App() {
         <main role="alert" className="flex min-w-0 flex-1 items-center justify-center bg-[#0B1220] p-6 text-sm text-[#CBD5E1]">
           HR meeting access requires a verified support-agent role. The API enforces this permission independently.
         </main>
+      )}
+      {authDialogOpen && !session.authenticated && (
+        <div role="dialog" aria-modal="true" aria-label="Sign in to UpToSkills" className="fixed inset-0 z-[100] overflow-y-auto bg-black/75 backdrop-blur-sm">
+          <button type="button" aria-label="Close sign-in dialog" onClick={() => setAuthDialogOpen(false)} className="fixed right-4 top-4 z-[101] rounded-lg border border-white/15 bg-[#111827] px-3 py-2 text-sm text-[#F8FAFC] hover:bg-[#1E293B]">Close</button>
+          <AuthScreen
+            key={authMode}
+            initialMode={authMode}
+            onSuccess={completeAuthentication}
+            defaultEmail={session.email}
+          />
+        </div>
       )}
     </div>
   );

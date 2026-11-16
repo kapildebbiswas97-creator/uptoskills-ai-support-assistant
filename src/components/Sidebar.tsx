@@ -5,6 +5,7 @@ import {
   History,
   Inbox,
   LifeBuoy,
+  LogIn,
   LogOut,
   MessageSquarePlus,
   PanelLeftClose,
@@ -34,6 +35,8 @@ interface SidebarProps {
   onCloseMobile: () => void;
   showHrEscalations: boolean;
   showHrMeetings: boolean;
+  authenticated: boolean;
+  onSignIn?: () => void;
   userEmail?: string;
   onSignOut?: () => void;
 }
@@ -53,14 +56,18 @@ export function Sidebar({
   onCloseMobile,
   showHrEscalations,
   showHrMeetings,
+  authenticated,
+  onSignIn,
   userEmail,
   onSignOut,
 }: SidebarProps) {
   const navItems: { id: AppView; label: string; icon: typeof Compass }[] = [
     { id: AppView.Welcome, label: 'Welcome & Topics', icon: Compass },
-    { id: AppView.History, label: 'Conversation History', icon: History },
-    { id: AppView.Escalation, label: 'Human Support', icon: LifeBuoy },
-    { id: AppView.MeetingRequests, label: 'Meeting Requests', icon: CalendarDays },
+    ...(authenticated ? [
+      { id: AppView.History, label: 'Conversation History', icon: History },
+      { id: AppView.Escalation, label: 'Human Support', icon: LifeBuoy },
+      { id: AppView.MeetingRequests, label: 'Meeting Requests', icon: CalendarDays },
+    ] : []),
     ...(showHrEscalations ? [{ id: AppView.HrEscalations, label: 'HR Escalations', icon: Inbox }] : []),
     ...(showHrMeetings ? [{ id: AppView.HrMeetingRequests, label: 'HR Meetings', icon: CalendarDays }] : []),
   ];
@@ -114,14 +121,14 @@ export function Sidebar({
             onNewConversation();
             if (isMobileDrawer) onCloseMobile();
           }}
-          aria-label="New Conversation"
-          title={collapsed && !isMobileDrawer ? 'New Conversation' : undefined}
+          aria-label={authenticated ? 'New Conversation' : 'Sign in to start'}
+          title={collapsed && !isMobileDrawer ? (authenticated ? 'New Conversation' : 'Sign in to start') : undefined}
           className={`flex w-full items-center justify-center gap-2 rounded-lg bg-[#2563EB] py-2 text-xs font-semibold text-[#F8FAFC] transition-colors hover:bg-[#1D4ED8] whitespace-nowrap ${
             collapsed && !isMobileDrawer ? 'px-0' : 'px-3'
           }`}
         >
           <MessageSquarePlus className="h-4 w-4 shrink-0" aria-hidden="true" />
-          {(!collapsed || isMobileDrawer) && <span>New Conversation</span>}
+          {(!collapsed || isMobileDrawer) && <span>{authenticated ? 'New Conversation' : 'Sign in to start'}</span>}
         </button>
       </div>
 
@@ -192,7 +199,7 @@ export function Sidebar({
       )}
 
       {/* Recent Conversations */}
-      {(!collapsed || isMobileDrawer) && (
+      {authenticated && (!collapsed || isMobileDrawer) && (
         <div className="flex flex-1 flex-col overflow-hidden p-2.5">
           <div className="mb-1.5 flex items-center justify-between px-1.5">
             <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-[#94A3B8]">
@@ -273,6 +280,18 @@ export function Sidebar({
           >
             <LogOut className="h-4 w-4" aria-hidden="true" />
           </button>
+        </div>
+      )}
+
+      {!authenticated && onSignIn && (!collapsed || isMobileDrawer) && (
+        <div className="border-t border-white/[0.06] px-3.5 py-3">
+          <p className="mb-2 text-[11px] leading-relaxed text-[#94A3B8]">Sign in to use the assistant and private support tools.</p>
+          <button type="button" onClick={onSignIn} className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-[#1E293B] px-3 py-2 text-xs font-semibold text-[#F8FAFC] hover:bg-white/[0.08]"><LogIn className="h-4 w-4" aria-hidden="true" />Sign in</button>
+        </div>
+      )}
+      {!authenticated && onSignIn && collapsed && !isMobileDrawer && (
+        <div className="border-t border-white/[0.06] p-2 flex justify-center">
+          <button type="button" onClick={onSignIn} aria-label="Sign in" title="Sign in" className="rounded p-2 text-[#94A3B8] hover:bg-white/[0.05] hover:text-white"><LogIn className="h-4 w-4" aria-hidden="true" /></button>
         </div>
       )}
 

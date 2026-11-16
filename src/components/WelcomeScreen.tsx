@@ -19,6 +19,7 @@ import { readPdfAttachment } from '../utils/pdfAttachment';
 
 interface WelcomeScreenProps {
   audience: AudienceContext;
+  authenticated: boolean;
   availableModels: AIModelOption[];
   selectedModel: string;
   modelAvailable: boolean;
@@ -26,11 +27,13 @@ interface WelcomeScreenProps {
   onChangeModel: (model: string) => void;
   onSelectQuickAction: (action: QuickActionItem) => void;
   onSubmitQuestion: (question: string, attachment?: PdfAttachmentPayload) => void;
+  onSignIn: () => void;
   onOpenMobileSidebar: () => void;
 }
 
 export function WelcomeScreen({
   audience,
+  authenticated,
   availableModels,
   selectedModel,
   modelAvailable,
@@ -38,6 +41,7 @@ export function WelcomeScreen({
   onChangeModel,
   onSelectQuickAction,
   onSubmitQuestion,
+  onSignIn,
   onOpenMobileSidebar,
 }: WelcomeScreenProps) {
   const [question, setQuestion] = useState('');
@@ -47,6 +51,10 @@ export function WelcomeScreen({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!question.trim() && !pdf) return;
+    if (!authenticated) {
+      onSignIn();
+      return;
+    }
     let attachment: PdfAttachmentPayload | undefined;
     if (pdf) {
       try {
@@ -83,6 +91,7 @@ export function WelcomeScreen({
 
         <div className="flex items-center gap-3 shrink-0">
           <ModelSelector models={availableModels} value={selectedModel} onChange={onChangeModel} modelAvailable={modelAvailable} className="hidden sm:flex" />
+          {!authenticated && <button type="button" onClick={onSignIn} className="inline-flex items-center rounded-lg bg-[#2563EB] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1D4ED8]">Sign in / Create account</button>}
           <a
             href={OFFICIAL_SUPPORT.internshipPortalUrl}
             target="_blank"
@@ -237,7 +246,7 @@ export function WelcomeScreen({
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#2563EB] px-4 py-2 text-xs font-semibold text-[#F8FAFC] transition-colors hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:opacity-45 whitespace-nowrap shrink-0"
                 >
                   <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Ask Assistant</span>
+                  <span>{authenticated ? 'Ask Assistant' : 'Sign in to ask'}</span>
                 </button>
               </div>
             </form>

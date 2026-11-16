@@ -16,7 +16,7 @@ The latest source reads these Vercel-relevant variable names. No values were ret
 | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini embedding calls; `GEMINI_API_KEY` also supports Gemini chat. | Preview and Production for current vector ingestion/retrieval | `GEMINI_API_KEY` was listed in the prior snapshot; values and validity were not checked. |
 | `AI_PROVIDER` and selected provider key (`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `NVIDIA_API_KEY`, etc.) | Chat provider/model selection and responses. | Preview and Production for live AI chat | Several provider key names were listed previously; selected provider/config and value validity not verified. |
 | `MALWARE_SCANNER_URL`, `MALWARE_SCANNER_TOKEN` | Fail-closed document malware scanning. | Preview and Production before document ingestion is enabled | Not listed in supplied snapshot; current listing not rechecked. |
-| `REDIS_URL` | Shared distributed rate limiting; optional process-memory fallback does not coordinate serverless instances. | Recommended Preview/Production | Not listed in supplied snapshot; current listing not rechecked. |
+| `REDIS_URL` | Shared distributed rate limiting; a process-memory fallback does not coordinate serverless instances. | Required for healthy Preview/Production readiness; local development may use memory | Not listed in supplied snapshot; current listing not rechecked. |
 | `DATABASE_MIGRATION_URL` | Separate operator-only schema migration identity; not used by request handlers. | Do not place in deployed function scope unless an approved workflow requires it | Not listed in supplied snapshot. |
 
 Additional optional controls include `AI_MODEL`, `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_VERSION`, `CHAT_TIMEOUT_MS`, `DOCUMENT_PARSE_TIMEOUT_MS`, `APP_ENV`, `ALLOW_ANONYMOUS_CHAT`, and `ANONYMOUS_CHAT_APPROVED`. Do not set anonymous chat true in production; production API chat remains authenticated.
@@ -30,7 +30,7 @@ npm run env:validate
 npm run env:validate:staging
 ```
 
-The staging validator requires MongoDB, OIDC, PostgreSQL reader/writer URLs, an embedding provider key, a chat provider key, explicit trusted role mapping, and a malware scanner. Redis remains optional and its process-local fallback is not globally consistent.
+The staging validator requires MongoDB, OIDC, PostgreSQL reader/writer URLs, an embedding provider key, a chat provider key, explicit trusted role mapping, and a malware scanner. The request limiter can start with a process-local fallback if Redis is unavailable, but Preview/Production readiness remains degraded unless `REDIS_URL` provides shared rate limiting. The health response reports whether the active limiter is shared or process-local.
 
 At runtime, `APP_ENV=staging`, `NODE_ENV=staging`, or Vercel's `VERCEL_ENV=preview` makes the model catalog and chat endpoints require a verified principal by default. `ALLOW_ANONYMOUS_CHAT` is optional and accepts only `true` or `false`; staging validation accepts `true` only when `ANONYMOUS_CHAT_APPROVED=true` is also set. No such product approval is configured for this verification. Non-staging defaults remain unchanged.
 
@@ -42,6 +42,7 @@ These variables are built into the client bundle and are visible to users. Never
 
 - `VITE_SUPABASE_URL`: The project URL found in the Supabase Dashboard (`https://<project-ref>.supabase.co`).
 - `VITE_SUPABASE_PUBLISHABLE_KEY`: The public API key (anon key or publishable key) intended for browser client use.
+- `VITE_SUPABASE_GOOGLE_OAUTH_ENABLED`: Set to `true` only after the Google provider is enabled and its redirect URLs are configured in the linked Supabase Auth project. When unset or false, the login screen hides Google sign-in and offers email/password instead.
 
 ### 2. Server-Side Environment Variables (Protected & Server-Only)
 

@@ -15,9 +15,11 @@ import {
 import { BrandMark } from './BrandMark';
 import {
   isSupabaseConfigured,
+  isGoogleOAuthConfigured,
   signInWithEmail,
   signUpWithEmail,
   signInWithGoogle,
+  resendSignUpVerification,
   sendPasswordResetEmail,
   updatePassword,
 } from '../utils/supabaseClient';
@@ -26,7 +28,7 @@ export type AuthMode = 'signIn' | 'signUp' | 'forgotPassword' | 'resetPassword' 
 
 interface AuthScreenProps {
   initialMode?: AuthMode;
-  onSuccess?: () => void;
+  onSuccess?: () => void | boolean | Promise<void | boolean>;
   defaultEmail?: string;
 }
 
@@ -48,6 +50,7 @@ export function AuthScreen({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const configured = isSupabaseConfigured();
+  const googleConfigured = isGoogleOAuthConfigured();
 
   const validateEmail = (value: string): boolean => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -92,7 +95,8 @@ export function AuthScreen({
         return;
       }
       if (data?.session) {
-        onSuccess?.();
+        const verified = await onSuccess?.();
+        if (verified === false) setError('Your sign-in succeeded, but secure application access could not be verified. Please retry shortly.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred during sign-in.');
@@ -141,7 +145,8 @@ export function AuthScreen({
         setMode('emailVerification');
         setSuccessMessage('Account created! Please check your email to verify your account.');
       } else if (data?.session) {
-        onSuccess?.();
+        const verified = await onSuccess?.();
+        if (verified === false) setError('Your account was created, but secure application access could not be verified. Please retry shortly.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred during account creation.');
@@ -154,6 +159,10 @@ export function AuthScreen({
     setError(null);
     if (!configured) {
       setError('Authentication service is not configured. Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.');
+      return;
+    }
+    if (!googleConfigured) {
+      setError('Google sign-in is not enabled for this deployment. Use email and password instead.');
       return;
     }
     setGoogleLoading(true);
@@ -239,12 +248,9 @@ export function AuthScreen({
     setResendLoading(true);
     setError(null);
     try {
-      const { error: authError } = await signUpWithEmail(email, password || 'TemporaryPlaceholder123!');
-      if (authError && !authError.message.includes('already registered')) {
-        setError(authError.message);
-      } else {
-        setSuccessMessage('A fresh verification link has been sent to your inbox.');
-      }
+      const { error: authError } = await resendSignUpVerification(email);
+      if (authError) setError(authError.message);
+      else setSuccessMessage('A fresh verification link has been sent to your inbox.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not resend verification email.');
     } finally {
@@ -381,7 +387,7 @@ export function AuthScreen({
                 {!loading && <ArrowRight className="h-4 w-4" />}
               </button>
 
-              <div className="relative my-4">
+              <div className="relative my-4" hidden={!googleConfigured}>
                 <div className="absolute inset-0 flex items-center" aria-hidden="true">
                   <div className="w-full border-t border-white/[0.08]" />
                 </div>
@@ -394,6 +400,7 @@ export function AuthScreen({
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={googleLoading}
+                hidden={!googleConfigured}
                 className="flex w-full items-center justify-center gap-3 rounded-lg border border-white/[0.08] bg-[#1E293B] px-4 py-2.5 text-sm font-medium text-[#F8FAFC] shadow-sm transition-colors hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[#38BDF8] focus:ring-offset-2 focus:ring-offset-[#111827] disabled:opacity-50"
               >
                 {googleLoading ? (
@@ -523,7 +530,7 @@ export function AuthScreen({
                 {!loading && <ArrowRight className="h-4 w-4" />}
               </button>
 
-              <div className="relative my-4">
+              <div className="relative my-4" hidden={!googleConfigured}>
                 <div className="absolute inset-0 flex items-center" aria-hidden="true">
                   <div className="w-full border-t border-white/[0.08]" />
                 </div>
@@ -536,6 +543,7 @@ export function AuthScreen({
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={googleLoading}
+                hidden={!googleConfigured}
                 className="flex w-full items-center justify-center gap-3 rounded-lg border border-white/[0.08] bg-[#1E293B] px-4 py-2.5 text-sm font-medium text-[#F8FAFC] shadow-sm transition-colors hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[#38BDF8] focus:ring-offset-2 focus:ring-offset-[#111827] disabled:opacity-50"
               >
                 {googleLoading ? (

@@ -38,7 +38,10 @@ test('production and Preview readiness reports missing required integrations as 
   assert.equal(isApplicationHealthDegraded(missing, false, false, { NODE_ENV: 'production' }), true);
   assert.equal(isApplicationHealthDegraded(missing, false, false, { NODE_ENV: 'test' }), false);
   const ready = { mongo: 'up', postgres: 'up', pgvector: true, latencyMs: {} } as const;
-  assert.equal(isApplicationHealthDegraded(ready, true, true, { VERCEL_ENV: 'production' }), false);
+  assert.equal(isApplicationHealthDegraded(ready, true, true, { VERCEL_ENV: 'production' }, 'redis'), false);
+  assert.equal(isApplicationHealthDegraded(ready, true, true, { VERCEL_ENV: 'production' }, 'memory'), true);
+  assert.equal(isApplicationHealthDegraded(ready, true, true, { VERCEL_ENV: 'preview' }, 'none'), true);
+  assert.equal(isApplicationHealthDegraded(ready, true, true, { NODE_ENV: 'test' }, 'memory'), false);
 });
 
 test('authentication readiness and health share derived Supabase settings', () => {
