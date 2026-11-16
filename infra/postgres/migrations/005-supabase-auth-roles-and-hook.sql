@@ -28,11 +28,24 @@ CREATE POLICY user_roles_read_own ON public.user_roles
   TO authenticated
   USING (user_id = auth.uid());
 
+-- Supabase Auth calls the hook as supabase_auth_admin. Its only table access is
+-- SELECT, constrained to the row selected by user_id inside the hook.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    EXECUTE 'DROP POLICY IF EXISTS user_roles_auth_hook_read ON public.user_roles';
+    EXECUTE 'CREATE POLICY user_roles_auth_hook_read ON public.user_roles FOR SELECT TO supabase_auth_admin USING (true)';
+  END IF;
+END $$;
+
 -- Prevent any direct modification by clients (only service role or SECURITY DEFINER procedures)
 REVOKE ALL ON TABLE public.user_roles FROM PUBLIC, anon;
 GRANT SELECT ON TABLE public.user_roles TO authenticated;
 DO $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    GRANT SELECT ON TABLE public.user_roles TO supabase_auth_admin;
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     GRANT ALL ON TABLE public.user_roles TO service_role;
   END IF;
@@ -43,7 +56,7 @@ CREATE OR REPLACE FUNCTION public.handle_new_user_role()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, auth, pg_temp
+SET search_path = pg_catalog, public, auth, pg_temp
 AS $$
 BEGIN
   -- New sign-ups receive strictly the least-privileged permitted role ('user')
@@ -53,6 +66,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+REVOKE ALL ON FUNCTION public.handle_new_user_role() FROM PUBLIC, anon, authenticated;
 
 -- Bind trigger to auth.users if the auth schema exists in this Supabase environment
 DO $$
@@ -73,8 +87,8 @@ CREATE OR REPLACE FUNCTION public.custom_access_token_hook(event jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
-SECURITY DEFINER
-SET search_path = public, pg_temp
+SECURITY INVOKER
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   v_user_id uuid;
@@ -82,8 +96,11 @@ DECLARE
   v_roles text[];
   v_tenant_id text;
 BEGIN
+  IF jsonb_typeof(event) <> 'object' OR jsonb_typeof(event->'claims') <> 'object' THEN
+    RAISE EXCEPTION 'INVALID_AUTH_HOOK_EVENT';
+  END IF;
   v_user_id := (event->>'user_id')::uuid;
-  v_claims := COALESCE(event->'claims', '{}'::jsonb);
+  v_claims := event->'claims';
 
   -- Query trusted user roles from server-controlled table
   SELECT array_agg(DISTINCT role)
@@ -111,7 +128,11 @@ BEGIN
     v_claims := v_claims - 'org_id';
   END IF;
 
-  RETURN jsonb_set(event, '{claims}', v_claims);
+  IF (SELECT count(DISTINCT tenant_id) FROM public.user_roles WHERE user_id = v_user_id AND tenant_id IS NOT NULL) > 1 THEN
+    RAISE EXCEPTION 'INCONSISTENT_USER_TENANT_BINDING';
+  END IF;
+
+  RETURN jsonb_build_object('claims', v_claims);
 END;
 $$;
 
@@ -120,9 +141,7 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
     GRANT EXECUTE ON FUNCTION public.custom_access_token_hook(jsonb) TO supabase_auth_admin;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT EXECUTE ON FUNCTION public.custom_access_token_hook(jsonb) TO service_role;
+    GRANT USAGE ON SCHEMA public TO supabase_auth_admin;
   END IF;
 END $$;
 
@@ -135,7 +154,7 @@ CREATE OR REPLACE FUNCTION public.assign_user_role(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, auth, pg_temp
+SET search_path = pg_catalog, public, auth, pg_temp
 AS $$
 DECLARE
   v_caller_id uuid;
@@ -143,14 +162,19 @@ DECLARE
   v_caller_is_admin boolean := false;
 BEGIN
   -- Validate that the assigned role is within the permitted vocabulary
-  IF p_target_role NOT IN ('super_admin', 'admin', 'support_agent', 'knowledge_manager', 'user') THEN
+  IF p_target_role IS NULL OR p_target_role NOT IN ('super_admin', 'admin', 'support_agent', 'knowledge_manager', 'user') THEN
     RAISE EXCEPTION 'INVALID_ROLE: Permitted roles are super_admin, admin, support_agent, knowledge_manager, user';
   END IF;
 
   v_caller_id := auth.uid();
 
+  -- A missing identity on an authenticated caller must never bypass role checks.
+  IF current_setting('request.jwt.claim.role', true) = 'authenticated' AND v_caller_id IS NULL THEN
+    RAISE EXCEPTION 'UNAUTHORIZED: Authenticated role claim is missing a user id.';
+  END IF;
+
   -- If called from an active JWT session, verify caller has administrator role
-  IF v_caller_id IS NOT NULL THEN
+  IF v_caller_id IS NOT NULL AND current_setting('request.jwt.claim.role', true) <> 'service_role' THEN
     SELECT EXISTS (
       SELECT 1 FROM public.user_roles WHERE user_id = v_caller_id AND role = 'super_admin'
     ) INTO v_caller_is_super;
@@ -186,8 +210,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.assign_user_role(uuid, text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.assign_user_role(uuid, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.assign_user_role(uuid, text, text) FROM PUBLIC, anon, authenticated;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN

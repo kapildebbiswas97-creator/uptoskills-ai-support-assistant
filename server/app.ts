@@ -9,8 +9,7 @@ import { extractPdfText } from './knowledge-base.js';
 import { getAIProviderConfig, getConfiguredAIProviders, namespacedModel } from './ai-provider.js';
 import { logOpenRouterUsage, type OpenRouterUsageReporter } from './ai-usage.js';
 import { getAllConfiguredModelCatalog, validateModelChoice } from './model-catalog.js';
-import { authenticationMiddleware } from './auth.js';
-import { requirePrincipal, requireRole } from './auth.js';
+import { authenticationMiddleware, isAuthenticationConfigured, requirePrincipal, requireRole } from './auth.js';
 import { requiresAuthenticatedChat } from './environment.js';
 import type { DocumentService } from './document-ingestion.js';
 import { MAX_DOCUMENT_BYTES } from './document-ingestion.js';
@@ -155,7 +154,7 @@ export function createApp(
     const started = performance.now();
     const databases = databaseHealthCheck ? await databaseHealthCheck.check() : undefined;
     const modelAvailable = Boolean(textStream);
-    const authenticationConfigured = Boolean(process.env.AUTH_ISSUER && process.env.AUTH_AUDIENCE && process.env.AUTH_ROLE_MAPPING);
+    const authenticationConfigured = isAuthenticationConfigured();
     const unhealthy = isApplicationHealthDegraded(databases, modelAvailable, authenticationConfigured);
     logEvent('health.check.complete', { requestId: _request.requestId, status: unhealthy ? 'degraded' : 'ok', mongo: databases?.mongo || 'not_checked', postgres: databases?.postgres || 'not_checked', model: modelAvailable ? 'configured' : 'not_configured', authentication: authenticationConfigured ? 'configured' : 'not_configured', durationMs: Math.round(performance.now() - started) }, unhealthy ? 'warn' : 'info');
     response.status(unhealthy ? 503 : 200).json({

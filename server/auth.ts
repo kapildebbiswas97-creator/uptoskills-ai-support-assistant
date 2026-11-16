@@ -24,8 +24,20 @@ const APP_ROLES = new Set<AppRole>(['super_admin', 'admin', 'support_agent', 'kn
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 let jwksUrl: string | undefined;
 
-function authSettings() {
-  const supabaseUrl = process.env.SUPABASE_URL?.trim();
+export interface ResolvedAuthenticationConfig {
+  issuer: string;
+  audience: string;
+  jwksUrl: string;
+  roleMapping: Record<string, AppRole>;
+  rolesClaim: string;
+  tenantClaim: string;
+  supabaseUrl?: string;
+  supabasePublishableKey?: string;
+  requireVerifiedEmail: boolean;
+}
+
+export function resolveAuthenticationConfig(environment: NodeJS.ProcessEnv = process.env): ResolvedAuthenticationConfig | undefined {
+  const supabaseUrl = environment.SUPABASE_URL?.trim();
   let supabaseAuthUrl: string | undefined;
   if (supabaseUrl) {
     try {
@@ -35,12 +47,28 @@ function authSettings() {
       // Configuration validation reports an invalid Supabase project URL.
     }
   }
-  const issuer = process.env.AUTH_ISSUER || supabaseAuthUrl;
-  const audience = process.env.AUTH_AUDIENCE || (supabaseAuthUrl ? 'authenticated' : undefined);
-  const configuredJwksUrl = process.env.AUTH_JWKS_URL || (supabaseAuthUrl
+  const issuer = environment.AUTH_ISSUER?.trim() || supabaseAuthUrl;
+  const audience = environment.AUTH_AUDIENCE?.trim() || (supabaseAuthUrl ? 'authenticated' : undefined);
+  const configuredJwksUrl = environment.AUTH_JWKS_URL?.trim() || (supabaseAuthUrl
     ? `${supabaseAuthUrl}/.well-known/jwks.json`
     : issuer ? `${issuer.replace(/\/$/, '')}/.well-known/jwks.json` : undefined);
-  return { issuer, audience, configuredJwksUrl };
+  const roleMapping = getRoleMapping(environment);
+  const requireVerifiedEmail = Boolean(supabaseUrl);
+  const supabasePublishableKey = environment.SUPABASE_PUBLISHABLE_KEY?.trim() || environment.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!issuer || !audience || !configuredJwksUrl || !Object.keys(roleMapping).length ||
+      !isSafeKeyUrl(issuer, environment.NODE_ENV) || !isSafeKeyUrl(configuredJwksUrl, environment.NODE_ENV) ||
+      (requireVerifiedEmail && !supabasePublishableKey)) return undefined;
+  return {
+    issuer,
+    audience,
+    jwksUrl: configuredJwksUrl,
+    roleMapping,
+    rolesClaim: environment.AUTH_ROLES_CLAIM?.trim() || 'roles',
+    tenantClaim: environment.AUTH_TENANT_CLAIM?.trim() || 'org_id',
+    ...(supabaseUrl ? { supabaseUrl: supabaseUrl.replace(/\/$/, '') } : {}),
+    ...(supabasePublishableKey ? { supabasePublishableKey } : {}),
+    requireVerifiedEmail,
+  };
 }
 
 export interface TokenVerificationSettings {
@@ -52,19 +80,18 @@ export interface TokenVerificationSettings {
   requireVerifiedEmail?: boolean;
 }
 
-function isSafeKeyUrl(value: string): boolean {
+function isSafeKeyUrl(value: string, nodeEnv = process.env.NODE_ENV): boolean {
   try {
     const url = new URL(value);
     const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-    return url.protocol === 'https:' || (process.env.NODE_ENV !== 'production' && loopback && url.protocol === 'http:');
+    return url.protocol === 'https:' || (nodeEnv !== 'production' && loopback && url.protocol === 'http:');
   } catch {
     return false;
   }
 }
 
-export function isAuthenticationConfigured(): boolean {
-  const { issuer, audience, configuredJwksUrl } = authSettings();
-  return Boolean(issuer && audience && configuredJwksUrl && isSafeKeyUrl(issuer) && isSafeKeyUrl(configuredJwksUrl) && Object.keys(getRoleMapping()).length);
+export function isAuthenticationConfigured(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(resolveAuthenticationConfig(environment));
 }
 
 function keySet(url: string) {
@@ -96,19 +123,57 @@ function getRoles(payload: JWTPayload, configuredClaim?: string, mapping = getRo
   return [...new Set(value.flatMap((role) => typeof role === 'string' && mapping[role] ? [mapping[role]] : []))];
 }
 
-export async function authenticateRequest(request: Request): Promise<AuthenticatedPrincipal | undefined> {
+export interface AuthenticationDependencies {
+  resolver?: JWTVerifyGetKey;
+  fetcher?: typeof fetch;
+}
+
+export async function authenticateRequest(request: Request, dependencies: AuthenticationDependencies = {}): Promise<AuthenticatedPrincipal | undefined> {
   const authorization = request.header('authorization');
   if (!authorization?.startsWith('Bearer ')) return undefined;
-  const { issuer, audience, configuredJwksUrl } = authSettings();
-  if (!issuer || !audience || !configuredJwksUrl || !isSafeKeyUrl(issuer) || !isSafeKeyUrl(configuredJwksUrl) || !Object.keys(getRoleMapping()).length) throw new Error('AUTH_NOT_CONFIGURED');
+  const config = resolveAuthenticationConfig();
+  if (!config) throw new Error('AUTH_NOT_CONFIGURED');
   const token = authorization.slice(7).trim();
   if (!token || token.length > 16_384) throw new Error('INVALID_TOKEN');
-  return verifyAccessToken(token, {
-    issuer,
-    audience,
-    roleMapping: getRoleMapping(),
-    requireVerifiedEmail: Boolean(process.env.SUPABASE_URL?.trim()),
-  }, keySet(configuredJwksUrl));
+  const principal = await verifyAccessToken(token, {
+    issuer: config.issuer,
+    audience: config.audience,
+    rolesClaim: config.rolesClaim,
+    tenantClaim: config.tenantClaim,
+    roleMapping: config.roleMapping,
+  }, dependencies.resolver ?? keySet(config.jwksUrl));
+  if (config.requireVerifiedEmail) {
+    await verifySupabaseEmailConfirmation(token, config, principal.subject, dependencies.fetcher);
+    principal.emailVerified = true;
+  }
+  return principal;
+}
+
+export async function verifySupabaseEmailConfirmation(
+  token: string,
+  config: Pick<ResolvedAuthenticationConfig, 'supabaseUrl' | 'supabasePublishableKey'>,
+  expectedSubject: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  if (!config.supabaseUrl || !config.supabasePublishableKey) throw new Error('AUTH_NOT_CONFIGURED');
+  let authResponse: globalThis.Response;
+  try {
+    authResponse = await fetcher(`${config.supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: config.supabasePublishableKey, authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw new Error('AUTH_UPSTREAM_UNAVAILABLE');
+  }
+  if (authResponse.status === 401 || authResponse.status === 403) throw new Error('INVALID_TOKEN');
+  if (!authResponse.ok) throw new Error('AUTH_UPSTREAM_UNAVAILABLE');
+  let user: unknown;
+  try { user = await authResponse.json(); } catch { throw new Error('AUTH_UPSTREAM_UNAVAILABLE'); }
+  if (typeof user !== 'object' || user === null || !('id' in user) || user.id !== expectedSubject ||
+      !('email_confirmed_at' in user) ||
+      typeof user.email_confirmed_at !== 'string' || user.email_confirmed_at.length === 0) {
+    throw new Error('UNVERIFIED_EMAIL');
+  }
 }
 
 export async function verifyAccessToken(token: string, settings: TokenVerificationSettings, resolver: JWTVerifyGetKey): Promise<AuthenticatedPrincipal> {
@@ -120,8 +185,9 @@ export async function verifyAccessToken(token: string, settings: TokenVerificati
     maxTokenAge: '12h',
   });
   if (!payload.sub || payload.sub.length > 200 || /[\x00-\x1f]/.test(payload.sub)) throw new Error('INVALID_TOKEN');
-  const emailVerified = payload.email_verified === true || (typeof payload.email_confirmed_at === 'string' && payload.email_confirmed_at.length > 0);
-  if (settings.requireVerifiedEmail && !emailVerified) throw new Error('UNVERIFIED_EMAIL');
+  // Supabase's access-token JWT does not include email_confirmed_at. Supabase-backed
+  // requests verify confirmation against /auth/v1/user after signature validation.
+  const emailVerified = payload.email_verified === true;
   const tenantClaim = settings.tenantClaim || process.env.AUTH_TENANT_CLAIM || 'org_id';
   const tenantId = payload[tenantClaim];
   const roles = getRoles(payload, settings.rolesClaim, settings.roleMapping ?? getRoleMapping());
@@ -166,7 +232,7 @@ export function authenticationMiddleware(request: Request, response: Response, n
     next();
   }).catch((error: unknown) => {
     const configurationError = error instanceof Error && error.message === 'AUTH_NOT_CONFIGURED';
-    const keySetUnavailable = isTemporaryJwksFailure(error);
+    const keySetUnavailable = isTemporaryJwksFailure(error) || (error instanceof Error && error.message === 'AUTH_UPSTREAM_UNAVAILABLE');
     const unavailable = configurationError || keySetUnavailable;
     logEvent('security.authentication_failure', { requestId: request.requestId, method: request.method, reason: configurationError ? 'configuration' : keySetUnavailable ? 'jwks_unavailable' : 'invalid_token' }, unavailable ? 'error' : 'warn');
     response.status(unavailable ? 503 : 401).json({ error: configurationError ? 'Authentication is not configured.' : keySetUnavailable ? 'Authentication verification is temporarily unavailable.' : 'Invalid or expired access token.' });

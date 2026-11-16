@@ -57,7 +57,8 @@ These variables are consumed by the Express backend and Vercel Serverless Functi
 - `AUTH_ROLES_CLAIM`: Name of the signed claim containing assigned application roles (default `roles`).
 - `AUTH_TENANT_CLAIM`: Name of the signed claim containing trusted tenant ID (default `org_id`).
 - `AUTH_ROLE_MAPPING`: JSON mapping from identity-provider role strings to application roles (`super_admin`, `admin`, `support_agent`, `knowledge_manager`, `user`).
-- `REQUIRE_VERIFIED_EMAIL`: When `true`, rejects JWTs without confirmed email (`email_confirmed_at`). Default `true` when Supabase is configured.
+- `SUPABASE_PUBLISHABLE_KEY`: Optional server-side copy of the public Supabase publishable key. When verified email is required, the server uses it with the access token to check the user through Supabase Auth's `/auth/v1/user` endpoint. `VITE_SUPABASE_PUBLISHABLE_KEY` is also accepted if it is already configured; neither value is a secret.
+- With `SUPABASE_URL` configured, email confirmation checks are always enforced against the Auth server; there is no environment-variable bypass. `email_confirmed_at` is a user-object field, not a standard access-token JWT claim.
 
 ### 3. Supabase Dashboard Setup Checklist
 
@@ -69,7 +70,7 @@ These variables are consumed by the Express backend and Vercel Serverless Functi
        - `https://<production-domain>.com/**`
        - `http://localhost:3000/**` (for local development)
    - Under **Authentication -> Email**:
-     - Keep **Confirm email** enabled.
+- Keep **Confirm email** enabled so unverified email users cannot sign in; the backend also verifies Supabase user status against the Auth server before granting protected API access.
      - Configure password reset redirect path to point to `/` or the application root.
 
 2. **Google Provider Setup**:
@@ -89,11 +90,11 @@ These variables are consumed by the Express backend and Vercel Serverless Functi
    - Run migration `infra/postgres/migrations/005-supabase-auth-roles-and-hook.sql`.
    - In Supabase Dashboard -> **Authentication -> Hooks**:
      - Under **Custom Access Token Hook**, select `public.custom_access_token_hook`.
-     - Save. This ensures all minted JWTs contain server-controlled `roles` and `org_id` from `public.user_roles`, ignoring untrusted client metadata.
+   - Save. This ensures all minted JWTs contain server-controlled `roles` and `org_id` from `public.user_roles`, ignoring untrusted client metadata.
 
 4. **Role Provisioning Procedure**:
    - By default, all new sign-ups are assigned the least-privileged `user` role via the `on_auth_user_created` trigger.
-   - To elevate an existing verified user to `support_agent` or `admin`, an authorized administrator executes:
+   - To elevate an existing verified user to `support_agent` or `admin`, a trusted database operator runs the procedure from the SQL Editor or an approved server-side `service_role` workflow. It is not callable by `authenticated` browser users:
      ```sql
      SELECT public.assign_user_role('target-user-uuid'::uuid, 'support_agent');
      ```

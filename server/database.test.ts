@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { setSignedRlsContext, vectorLiteral } from './database';
+import { setSignedRlsContext, shouldApplyPostgresMigration, vectorLiteral } from './database';
 import type { PoolClient } from 'pg';
 import { migrateLocalPostgres } from '../scripts/migrate-local-postgres';
 import { provisionLocalRlsKey } from '../scripts/provision-local-rls-key';
@@ -13,6 +13,12 @@ test('formats finite embedding values for a parameterized pgvector query', () =>
   assert.throws(() => vectorLiteral([Number.NaN]), /finite numeric values/);
 });
 
+test('Supabase Auth migration is not applied to a generic application PostgreSQL database', () => {
+  assert.equal(shouldApplyPostgresMigration('002-document-chunks.sql', {}), true);
+  assert.equal(shouldApplyPostgresMigration('005-supabase-auth-roles-and-hook.sql', {}), false);
+  assert.equal(shouldApplyPostgresMigration('005-supabase-auth-roles-and-hook.sql', { SUPABASE_URL: 'https://project.supabase.co' }), true);
+});
+
 test('PostgreSQL document chunks enable forced tenant row-level security', async () => {
   const migration = await readFile(path.resolve(process.cwd(), 'infra/postgres/migrations/003-document-chunk-rls.sql'), 'utf8');
   assert.match(migration, /ENABLE ROW LEVEL SECURITY/i);
@@ -20,6 +26,24 @@ test('PostgreSQL document chunks enable forced tenant row-level security', async
   assert.match(migration, /app\.tenant_id/i);
   assert.match(migration, /app\.allow_all_tenants/i);
   assert.match(migration, /IS NOT DISTINCT FROM/i);
+});
+
+test('Supabase Auth hook uses the documented response and narrowly scoped invoker permissions', async () => {
+  const migration = await readFile(path.resolve(process.cwd(), 'infra/postgres/migrations/005-supabase-auth-roles-and-hook.sql'), 'utf8');
+  const hook = migration.match(/CREATE OR REPLACE FUNCTION public\.custom_access_token_hook\(event jsonb\)([\s\S]*?)\n\$\$;/i)?.[1] ?? '';
+  assert.match(hook, /RETURNS jsonb/i);
+  assert.match(hook, /SECURITY INVOKER/i);
+  assert.doesNotMatch(hook, /SECURITY DEFINER/i);
+  assert.match(hook, /WHERE user_id = v_user_id/i);
+  assert.match(hook, /jsonb_build_object\('claims', v_claims\)/i);
+  assert.match(migration, /GRANT USAGE ON SCHEMA public TO supabase_auth_admin/i);
+  assert.match(migration, /GRANT SELECT ON TABLE public\.user_roles TO supabase_auth_admin/i);
+  assert.match(migration, /CREATE POLICY user_roles_auth_hook_read ON public\.user_roles FOR SELECT TO supabase_auth_admin USING \(true\)/i);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.custom_access_token_hook\(jsonb\) FROM PUBLIC, anon, authenticated/i);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.assign_user_role\(uuid, text, text\) FROM PUBLIC, anon, authenticated/i);
+  assert.doesNotMatch(migration, /GRANT EXECUTE ON FUNCTION public\.assign_user_role\(uuid, text, text\) TO authenticated/i);
+  assert.match(migration, /ON CONFLICT \(user_id, role\) DO NOTHING/i);
+  assert.match(migration, /VALUES \(NEW\.id, 'user', NULL\)/i);
 });
 
 test('signed RLS migration removes direct GUC trust and keeps the signing key behind a hardened function', async () => {

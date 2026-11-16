@@ -29,7 +29,7 @@
 - `src/components/HrMeetingDashboard.tsx`: Migrated meeting confirmation and rejection decisions to `apiFetch`.
 
 ### Backend & Security Verification
-- `server/auth.ts`: Integrated Supabase Auth URL derivation, automatic configuration of issuer (`/auth/v1`), audience (`authenticated`), JWKS endpoint (`/.well-known/jwks.json`), and email verification checks (`email_confirmed_at`).
+- `server/auth.ts`: Integrated Supabase Auth URL derivation, automatic configuration of issuer (`/auth/v1`), audience (`authenticated`), JWKS endpoint (`/.well-known/jwks.json`), and server-side email verification. The original JWT `email_confirmed_at` check was incorrect and was corrected during Phase 10A.
 - `server/document-ingestion.ts`: Fixed native module worker conflict on Windows for PDF extraction by decoupling `pdf-parse` execution from nested worker threads.
 - `server/environment.ts`: Added validation for `SUPABASE_URL` and `VITE_SUPABASE_URL`.
 - `infra/postgres/migrations/005-supabase-auth-roles-and-hook.sql`: Database migration creating `public.user_roles`, enabling forced RLS, automated least-privilege trigger for new users (`'user'`), Supabase Custom Access Token Hook, and administrator-only role assignment procedure.
@@ -45,7 +45,7 @@
 
 1. **Email & Password Sign-Up**: Validates email format and minimum 8-character password with confirmation; triggers Supabase Auth `signUp` with email verification redirect.
 2. **Email & Password Sign-In**: Authenticates via `signInWithPassword`, stores session securely via PKCE, and retrieves application-specific roles.
-3. **Email Verification**: Enforces verified emails (`email_confirmed_at`); displays email verification confirmation screen with a resend button.
+3. **Email Verification**: Supabase Auth blocks unverified email sign-in when Confirm email is enabled. The backend verifies email status against the Auth user endpoint; `email_confirmed_at` is not treated as a standard JWT claim.
 4. **Forgot & Reset Password Flows**: Dispatches password reset emails with recovery links; catches `PASSWORD_RECOVERY` events to display the password update interface.
 5. **Continue with Google**: Initiates PKCE-compliant Google OAuth via Supabase `signInWithOAuth({ provider: 'google' })`.
 6. **Persistent Session Restoration**: Restores session from localStorage on application load and refreshes expired tokens automatically.

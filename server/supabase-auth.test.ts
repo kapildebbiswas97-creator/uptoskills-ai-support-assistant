@@ -4,8 +4,10 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { Request, Response } from 'express';
 import {
   authenticateRequest,
+  resolveAuthenticationConfig,
   requirePrincipal,
   requireRole,
+  verifySupabaseEmailConfirmation,
   verifyAccessToken,
   type AppRole,
   type AuthenticatedPrincipal,
@@ -37,8 +39,7 @@ async function mintSupabaseToken(options: {
   audience?: string;
   subject?: string;
   email?: string;
-  emailConfirmedAt?: string | null;
-  roles?: string[];
+  roles?: string[] | null;
   tenantId?: string;
   userMetadata?: Record<string, unknown>;
   exp?: number;
@@ -47,12 +48,13 @@ async function mintSupabaseToken(options: {
 } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const payload: Record<string, unknown> = {
-    roles: options.roles ?? ['user'],
+    role: 'authenticated',
+    aal: 'aal1',
+    session_id: '00000000-0000-4000-8000-000000000001',
+    is_anonymous: false,
+    ...(options.roles === null ? {} : { roles: options.roles ?? ['user'] }),
     ...(options.tenantId ? { org_id: options.tenantId } : {}),
     ...(options.email ? { email: options.email } : { email: 'intern@example.com' }),
-    ...(options.emailConfirmedAt !== undefined
-      ? (options.emailConfirmedAt ? { email_confirmed_at: options.emailConfirmedAt } : {})
-      : { email_confirmed_at: new Date(Date.now() - 60_000).toISOString() }),
     ...(options.userMetadata ? { user_metadata: options.userMetadata } : {}),
   };
 
@@ -73,14 +75,12 @@ const supabaseSettings = {
   rolesClaim: 'roles',
   tenantClaim: 'org_id',
   roleMapping: defaultRoleMapping,
-  requireVerifiedEmail: true,
 };
 
-test('1. valid Supabase JWT is verified and maps subject, email, verified status, and roles', async () => {
+test('1. valid Supabase JWT contract maps subject, email, roles, and trusted tenant claim', async () => {
   const token = await mintSupabaseToken({
     subject: 'user-supabase-abc',
     email: 'verified.user@uptoskills.com',
-    emailConfirmedAt: '2026-11-15T12:00:00Z',
     roles: ['user'],
     tenantId: 'tenant-engineering-1',
   });
@@ -88,7 +88,7 @@ test('1. valid Supabase JWT is verified and maps subject, email, verified status
   const principal = await verifyAccessToken(token, supabaseSettings, testResolver);
   assert.equal(principal.subject, 'user-supabase-abc');
   assert.equal(principal.email, 'verified.user@uptoskills.com');
-  assert.equal(principal.emailVerified, true);
+  assert.equal(principal.emailVerified, false, 'Supabase does not put email_confirmed_at in the access-token JWT');
   assert.equal(principal.tenantId, 'tenant-engineering-1');
   assert.deepEqual(principal.roles, ['user']);
 });
@@ -177,15 +177,88 @@ test('7. invalid or missing role claims fail closed with INVALID_ROLE_CLAIM', as
   );
 });
 
-test('8. unverified email fails closed with UNVERIFIED_EMAIL', async () => {
-  const unverifiedToken = await mintSupabaseToken({
-    emailConfirmedAt: null,
+test('8. trusted Supabase user lookup enforces email confirmation without inventing a JWT claim', async () => {
+  const token = await mintSupabaseToken({ subject: 'user-supabase-abc' });
+  const calls: Array<{ url: string; authorization: string | null; apikey: string | null }> = [];
+  const config = { supabaseUrl: SUPABASE_PROJECT_URL, supabasePublishableKey: 'public-test-key' };
+  await verifySupabaseEmailConfirmation(token, config, 'user-supabase-abc', async (input, init) => {
+    calls.push({
+      url: String(input),
+      authorization: new Headers(init?.headers).get('authorization'),
+      apikey: new Headers(init?.headers).get('apikey'),
+    });
+    return new Response(JSON.stringify({ id: 'user-supabase-abc', email_confirmed_at: '2026-11-15T12:00:00Z' }), { status: 200 });
   });
+  assert.deepEqual(calls, [{
+    url: `${SUPABASE_PROJECT_URL}/auth/v1/user`,
+    authorization: `Bearer ${token}`,
+    apikey: 'public-test-key',
+  }]);
+  await assert.rejects(() => verifySupabaseEmailConfirmation(token, config, 'user-supabase-abc', async () =>
+    new Response(JSON.stringify({ id: 'user-supabase-abc', email_confirmed_at: null }), { status: 200 })
+  ), /UNVERIFIED_EMAIL/);
+  await assert.rejects(() => verifySupabaseEmailConfirmation(token, config, 'user-supabase-abc', async () =>
+    new Response('{}', { status: 401 })
+  ), /INVALID_TOKEN/);
+  await assert.rejects(() => verifySupabaseEmailConfirmation(token, config, 'different-user', async () =>
+    new Response(JSON.stringify({ id: 'user-supabase-abc', email_confirmed_at: '2026-11-15T12:00:00Z' }), { status: 200 })
+  ), /UNVERIFIED_EMAIL/);
+});
 
-  await assert.rejects(
-    () => verifyAccessToken(unverifiedToken, supabaseSettings, testResolver),
-    /UNVERIFIED_EMAIL/
-  );
+test('authenticateRequest rejects unconfirmed users before a protected route receives a principal', async () => {
+  const names = ['SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_PUBLISHABLE_KEY', 'AUTH_ROLE_MAPPING', 'NODE_ENV'] as const;
+  const prior = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  process.env.SUPABASE_URL = SUPABASE_PROJECT_URL;
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY = 'public-test-key';
+  delete process.env.SUPABASE_PUBLISHABLE_KEY;
+  process.env.AUTH_ROLE_MAPPING = JSON.stringify(defaultRoleMapping);
+  process.env.NODE_ENV = 'production';
+  try {
+    const token = await mintSupabaseToken({ subject: 'user-supabase-abc' });
+    const request = { header: (name: string) => name === 'authorization' ? `Bearer ${token}` : undefined } as unknown as Request;
+    await assert.rejects(() => authenticateRequest(request, {
+      resolver: testResolver,
+      fetcher: async () => new Response(JSON.stringify({ id: 'user-supabase-abc', email_confirmed_at: null }), { status: 200 }),
+    }), /UNVERIFIED_EMAIL/);
+    const principal = await authenticateRequest(request, {
+      resolver: testResolver,
+      fetcher: async () => new Response(JSON.stringify({ id: 'user-supabase-abc', email_confirmed_at: '2026-11-15T12:00:00Z' }), { status: 200 }),
+    });
+    assert.equal(principal?.emailVerified, true);
+  } finally {
+    for (const name of names) {
+      const value = prior[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+test('Supabase_URL alone resolves issuer, audience, JWKS, role mapping, and publishable key consistently', () => {
+  const config = resolveAuthenticationConfig({
+    SUPABASE_URL: SUPABASE_PROJECT_URL,
+    VITE_SUPABASE_PUBLISHABLE_KEY: 'public-test-key',
+    AUTH_ROLE_MAPPING: JSON.stringify(defaultRoleMapping),
+    NODE_ENV: 'production',
+  });
+  assert.equal(config?.issuer, SUPABASE_AUTH_ISSUER);
+  assert.equal(config?.audience, SUPABASE_AUDIENCE);
+  assert.equal(config?.jwksUrl, `${SUPABASE_AUTH_ISSUER}/.well-known/jwks.json`);
+  assert.equal(config?.roleMapping.support_agent, 'support_agent');
+  assert.equal(config?.tenantClaim, 'org_id');
+  assert.equal(config?.requireVerifiedEmail, true);
+});
+
+test('every application role is extracted only from the configured signed roles claim', async () => {
+  for (const role of ['user', 'support_agent', 'knowledge_manager', 'admin', 'super_admin'] as const) {
+    const token = await mintSupabaseToken({ roles: [role] });
+    const principal = await verifyAccessToken(token, supabaseSettings, testResolver);
+    assert.deepEqual(principal.roles, [role]);
+  }
+  const wrongClaimToken = await mintSupabaseToken({ roles: [] });
+  await assert.rejects(() => verifyAccessToken(wrongClaimToken, { ...supabaseSettings, rolesClaim: 'role' }, testResolver), /INVALID_ROLE_CLAIM/);
+  const missingRolesToken = await mintSupabaseToken({ roles: null });
+  await assert.rejects(() => verifyAccessToken(missingRolesToken, supabaseSettings, testResolver), /INVALID_ROLE_CLAIM/);
 });
 
 test('9. regular user attempting an HR route is denied with 403', () => {

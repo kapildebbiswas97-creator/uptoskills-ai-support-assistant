@@ -295,7 +295,9 @@ export async function runPostgresMigrations(
   try {
     await client.query('SELECT pg_advisory_lock(84120411)');
     await client.query('CREATE TABLE IF NOT EXISTS public.schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-    const files = (await readdir(migrationsDirectory)).filter((file) => /^\d+[-_].+\.sql$/.test(file)).sort();
+    const files = (await readdir(migrationsDirectory))
+      .filter((file) => /^\d+[-_].+\.sql$/.test(file) && shouldApplyPostgresMigration(file))
+      .sort();
     for (const filename of files) {
       const seen = await client.query('SELECT 1 FROM public.schema_migrations WHERE version = $1', [filename]);
       if (seen.rowCount) continue;
@@ -317,4 +319,9 @@ export async function runPostgresMigrations(
     client.release();
     await pool.end();
   }
+}
+
+export function shouldApplyPostgresMigration(filename: string, environment: NodeJS.ProcessEnv = process.env): boolean {
+  if (filename === '005-supabase-auth-roles-and-hook.sql') return Boolean(environment.SUPABASE_URL?.trim());
+  return true;
 }
