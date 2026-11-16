@@ -29,6 +29,12 @@ try {
   let protectedRouteCount = 0;
   const pdfPackagePattern = /^(?:pdf-parse(?:\/.*)?|pdfjs-dist(?:\/.*)?|@napi-rs\/canvas(?:-.*)?)$/;
   const inputs = Object.entries(result.metafile.inputs);
+  const includedSources = new Set(inputs.map(([input]) => input.replaceAll('\\', '/')));
+  for (const requiredSource of ['api/index.ts', 'server/app.ts']) {
+    if (!includedSources.has(requiredSource)) {
+      errors.push(`Required serverless source '${requiredSource}' is missing from the Vercel function bundle`);
+    }
+  }
   for (const [input, details] of inputs) {
     for (const edge of details.imports) {
       if (edge.external && pdfPackagePattern.test(edge.path) && edge.kind !== 'dynamic-import') {
