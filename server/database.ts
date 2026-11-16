@@ -9,6 +9,8 @@ import { createSignedRlsContext } from './rls-context.js';
 
 export type KnowledgeSearch = (query: string, signal: AbortSignal, principal?: AuthenticatedPrincipal) => Promise<string[]>;
 
+const POSTGRES_VECTOR_SEARCH_PATH = 'pg_catalog, extensions, public, knowledge';
+
 export interface IndexedChunk {
   chunkId: string;
   documentId: string;
@@ -42,6 +44,12 @@ function createPool(connectionString: string, max = 4): Pool {
   });
   pool.on('error', () => undefined);
   return pool;
+}
+
+async function prepareVectorClient(client: Pick<PoolClient, 'query'>): Promise<void> {
+  // Supabase installs pgvector in extensions; local PostgreSQL commonly uses public.
+  // pg_catalog first and extensions before public keep vector resolution explicit.
+  await client.query(`SET search_path TO ${POSTGRES_VECTOR_SEARCH_PATH}`);
 }
 
 export async function setSignedRlsContext(
@@ -118,6 +126,7 @@ export function createKnowledgeSearch(
       const client = await pool.connect();
       let result;
       try {
+        await prepareVectorClient(client);
         await client.query('BEGIN');
         await setSignedRlsContext(client, tenantId, globalTenantAccess, 'uts_assistant_reader');
         result = await client.query<{ content: string; metadata: Record<string, unknown>; document_id: string; chunk_index: number; fusion_score: number }>(
@@ -203,6 +212,7 @@ export function createDocumentChunkStore(databaseUrl = process.env.DATABASE_INGE
       }
       const client = await pool.connect();
       try {
+        await prepareVectorClient(client);
         await client.query('BEGIN');
         await setSignedRlsContext(client, tenantId, false, 'uts_assistant_writer');
         await client.query('DELETE FROM knowledge.document_chunks WHERE document_id = $1', [documentId]);
@@ -229,6 +239,7 @@ export function createDocumentChunkStore(databaseUrl = process.env.DATABASE_INGE
     async deleteDocumentChunks(documentId, tenantId = null, allowAllTenants = false) {
       const client = await pool.connect();
       try {
+        await prepareVectorClient(client);
         await client.query('BEGIN');
         await setSignedRlsContext(client, tenantId, allowAllTenants, 'uts_assistant_writer');
         await client.query('DELETE FROM knowledge.document_chunks WHERE document_id = $1', [documentId]);
@@ -243,6 +254,7 @@ export function createDocumentChunkStore(databaseUrl = process.env.DATABASE_INGE
     async hasDocumentChunks(documentId) {
       const client = await pool.connect();
       try {
+        await prepareVectorClient(client);
         await client.query('BEGIN');
         await setSignedRlsContext(client, null, true, 'uts_assistant_writer');
         const result = await client.query<{ has_chunks: boolean }>(
@@ -261,6 +273,7 @@ export function createDocumentChunkStore(databaseUrl = process.env.DATABASE_INGE
     async listDocumentIds(limit = 1000) {
       const client = await pool.connect();
       try {
+        await prepareVectorClient(client);
         await client.query('BEGIN');
         await setSignedRlsContext(client, null, true, 'uts_assistant_writer');
         const result = await client.query<{ document_id: string }>(
